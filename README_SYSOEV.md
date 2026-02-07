@@ -7,7 +7,7 @@
 - 13 - logreg (TF-IDF 300 фичей) самые сильные слова `but`, `stop`, `usually`  
 - 7  - catboost (10 деревьев 500 фичей) самые сильные слова `but`, `been`
 - График PR Curve `data/experiments/exp_1/chart.png`
-![[data/experiments/exp_1/chart.png]]
+![](data/experiments/exp_1/chart.png)
 - Все эксперименты тут `data/experiments/results.txt` 
 - Таблица со метрикой на test и val - mean и std
 
