@@ -184,3 +184,7 @@ hub/
 features*/
 checkpoints
 sec_arxiv/
+data/
+.direnv/
+.envrc
+catboost_info/
