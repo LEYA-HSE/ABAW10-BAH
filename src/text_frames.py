@@ -1,4 +1,5 @@
 import os
+from sklearn.base import estimator_html_repr
 import yaml
 import json
 import glob
@@ -17,6 +18,9 @@ from sklearn.metrics import average_precision_score, roc_auc_score, f1_score, Pr
 from sklearn.discriminant_analysis import LinearDiscriminantAnalysis
 from sklearn.decomposition import TruncatedSVD
 from sklearn.linear_model import LogisticRegression
+from pulearn.bagging import BaggingPuClassifier
+from pulearn.elkanoto import ElkanotoPuClassifier, WeightedElkanotoPuClassifier
+from sklearn.svm import SVC
 
 
 def read_frames(filepath):
@@ -339,6 +343,54 @@ save_experiment_predictions(root_folder="data/experiments/exp_2/",
                             name='5',
                             pipe=pipeline_5,
                             datasets=list_datasets)
+# %%
+
+pipeline_6 = Pipeline([
+    ('tfidf', TfidfVectorizer(
+        ngram_range=(1, 1),
+        max_features=1000,
+    )),
+    ('PU', BaggingPuClassifier(
+        estimator=CatBoostClassifier(
+            iterations=1000,
+            learning_rate=0.05,
+            depth=6,
+            verbose=100,
+            random_seed=42,
+            eval_metric='Logloss',
+        ),
+        n_estimators=10,
+        oob_score=False,
+    )),
+])
+
+pipeline_6.fit(train_df['text'], train_df['label'])
+
+save_experiment_predictions(root_folder="data/experiments/exp_2/",
+                            name='6',
+                            pipe=pipeline_6,
+                            datasets=list_datasets)
+# %%
+
+pipeline_7 = Pipeline([
+    ('tfidf', TfidfVectorizer(
+        ngram_range=(1, 2),
+        max_features=1000,
+    )),
+    ('PU', BaggingPuClassifier(
+        estimator=LogisticRegression(C=3, random_state=42, max_iter=1000),
+        n_estimators=10,
+        oob_score=False,
+    )),
+])
+
+pipeline_7.fit(train_df['text'], train_df['label'])
+
+save_experiment_predictions(root_folder="data/experiments/exp_2/",
+                            name='7',
+                            pipe=pipeline_7,
+                            datasets=list_datasets)
+
 
 results, results_mean = calc_scores(root_folder="data/experiments/exp_2/",
                                     plot_names=['4', '2'])
