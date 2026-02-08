@@ -189,3 +189,4 @@ data/
 .envrc
 catboost_info/
 output/
+src/__pycache__/
