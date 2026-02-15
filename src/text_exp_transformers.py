@@ -650,9 +650,10 @@ save_experiment_predictions(root_folder="data/experiments/exp_3/",
                             column=None,
                             )
 
+# %%
 
 results, results_mean = calc_scores(root_folder="data/experiments/exp_3/",
-                                    plot_names=['12', '1', '2', '3', '4'])
+                                    plot_names=['14', '3'])
 
 top_names = results_mean.head(12).index.tolist()
 print(results_mean.to_markdown(tablefmt="github"))
