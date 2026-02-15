@@ -17,9 +17,9 @@ from pulearn.bagging import BaggingPuClassifier
 from src.text_core import save_experiment_predictions, calc_scores
 
 
-train_df = pd.read_parquet("data/output/split_train.parquet")
-val_df = pd.read_parquet("data/output/split_val.parquet")
-test_df = pd.read_parquet("data/output/split_test.parquet")
+train_df = pd.read_parquet("data/output/frame_train.parquet")
+val_df = pd.read_parquet("data/output/frame_val.parquet")
+test_df = pd.read_parquet("data/output/frame_test.parquet")
 list_datasets = [
     ('train', train_df),
     ('val', val_df),
@@ -128,7 +128,7 @@ model_1.fit(
     use_best_model=True
 )
 
-save_experiment_predictions(root_folder="data/experiments/exp_3/",
+save_experiment_predictions(root_folder="data/experiments/exp_4/",
                             name='1',
                             pipe=model_1,
                             datasets=list_emb_1,
@@ -163,7 +163,7 @@ model_2.fit(
     use_best_model=True
 )
 
-save_experiment_predictions(root_folder="data/experiments/exp_3/",
+save_experiment_predictions(root_folder="data/experiments/exp_4/",
                             name='2',
                             pipe=model_2,
                             datasets=list_emb_1,
@@ -198,7 +198,7 @@ model_3.fit(
     use_best_model=True
 )
 
-save_experiment_predictions(root_folder="data/experiments/exp_3/",
+save_experiment_predictions(root_folder="data/experiments/exp_4/",
                             name='3',
                             pipe=model_3,
                             datasets=list_emb_1,
@@ -233,7 +233,7 @@ model_4.fit(
     use_best_model=True
 )
 
-save_experiment_predictions(root_folder="data/experiments/exp_3/",
+save_experiment_predictions(root_folder="data/experiments/exp_4/",
                             name='4',
                             pipe=model_4,
                             datasets=list_emb_2,
@@ -300,7 +300,7 @@ for epoch in range(1000):
         print(f"Epoch {epoch}, Loss: {loss.item():.4f}")
 
 
-save_experiment_predictions(root_folder="data/experiments/exp_3/",
+save_experiment_predictions(root_folder="data/experiments/exp_4/",
                             name='5',
                             pipe=model_5,
                             datasets=list_emb_2,
@@ -367,7 +367,7 @@ for epoch in range(500):
         print(f"Epoch {epoch}, Loss: {loss.item():.4f}")
 
 
-save_experiment_predictions(root_folder="data/experiments/exp_3/",
+save_experiment_predictions(root_folder="data/experiments/exp_4/",
                             name='6',
                             pipe=model_6,
                             datasets=list_emb_1,
@@ -401,7 +401,7 @@ model_7.fit(
     use_best_model=True
 )
 
-save_experiment_predictions(root_folder="data/experiments/exp_3/",
+save_experiment_predictions(root_folder="data/experiments/exp_4/",
                             name='7',
                             pipe=model_7,
                             datasets=list_emb_3,
@@ -434,7 +434,7 @@ model_8.fit(
     use_best_model=True
 )
 
-save_experiment_predictions(root_folder="data/experiments/exp_3/",
+save_experiment_predictions(root_folder="data/experiments/exp_4/",
                             name='8',
                             pipe=model_8,
                             datasets=list_emb_4,
@@ -469,7 +469,7 @@ model_9.fit(
     use_best_model=True
 )
 
-save_experiment_predictions(root_folder="data/experiments/exp_3/",
+save_experiment_predictions(root_folder="data/experiments/exp_4/",
                             name='9',
                             pipe=model_9,
                             datasets=list_emb_1,
@@ -502,7 +502,7 @@ model_10 = BaggingPuClassifier(
  
 model_10.fit(X_train, y_train)
 
-save_experiment_predictions(root_folder="data/experiments/exp_3/",
+save_experiment_predictions(root_folder="data/experiments/exp_4/",
                             name='10',
                             pipe=model_10,
                             datasets=list_emb_1,
@@ -536,7 +536,7 @@ model_11 = BaggingPuClassifier(
  
 model_11.fit(X_train, y_train)
 
-save_experiment_predictions(root_folder="data/experiments/exp_3/",
+save_experiment_predictions(root_folder="data/experiments/exp_4/",
                             name='11',
                             pipe=model_11,
                             datasets=list_emb_1,
@@ -571,7 +571,7 @@ model_12.fit(
     use_best_model=True
 )
 
-save_experiment_predictions(root_folder="data/experiments/exp_3/",
+save_experiment_predictions(root_folder="data/experiments/exp_4/",
                             name='12',
                             pipe=model_12,
                             datasets=list_emb_1,
@@ -606,7 +606,7 @@ model_13 = BaggingPuClassifier(
 model_13.fit(X_train, y_train)
 
 
-save_experiment_predictions(root_folder="data/experiments/exp_3/",
+save_experiment_predictions(root_folder="data/experiments/exp_4/",
                             name='13',
                             pipe=model_13,
                             datasets=list_emb_2,
@@ -643,16 +643,16 @@ model_14 = BaggingClassifier(
 model_14.fit(X_train, y_train)
 
 
-save_experiment_predictions(root_folder="data/experiments/exp_3/",
+save_experiment_predictions(root_folder="data/experiments/exp_4/",
                             name='14',
                             pipe=model_14,
                             datasets=list_emb_2,
                             column=None,
                             )
+# %%
 
-
-results, results_mean = calc_scores(root_folder="data/experiments/exp_3/",
-                                    plot_names=['12', '1', '2', '3', '4'])
+results, results_mean = calc_scores(root_folder="data/experiments/exp_4/",
+                                    plot_names=['12', '2', '10'])
 
 top_names = results_mean.head(12).index.tolist()
 print(results_mean.to_markdown(tablefmt="github"))

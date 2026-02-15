@@ -4,7 +4,6 @@ from catboost import CatBoostClassifier
 from sklearn.feature_extraction.text import TfidfVectorizer, CountVectorizer
 from sklearn.pipeline import Pipeline
 from sklearn.preprocessing import FunctionTransformer
-from sklearn.metrics import average_precision_score, roc_auc_score, f1_score, PrecisionRecallDisplay
 from sklearn.discriminant_analysis import LinearDiscriminantAnalysis
 from sklearn.decomposition import TruncatedSVD
 from sklearn.linear_model import LogisticRegression
@@ -367,3 +366,4 @@ results, results_mean = calc_scores(root_folder="data/experiments/exp_1/",
 top_names = results_mean.head(5).index.tolist()
 print(results_mean.to_markdown(tablefmt="github"))
 print(results[results['name'].isin(top_names)].to_markdown(tablefmt="github"))
+

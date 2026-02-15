@@ -6,9 +6,10 @@ import pandas as pd
 import numpy as np
 
 import matplotlib.pyplot as plt
+from sklearn.metrics import average_precision_score, roc_auc_score, f1_score, PrecisionRecallDisplay
 
 
-def save_experiment_predictions(root_folder, name, pipe, datasets):
+def save_experiment_predictions(root_folder, name, pipe, datasets, column='text'):
 
     def is_serializable(obj):
         try:
@@ -29,7 +30,8 @@ def save_experiment_predictions(root_folder, name, pipe, datasets):
         json.dump(params, f, indent=4)
 
     for dtype, df in datasets:
-        pred = pipe.predict_proba(df['text'])
+        X = df.drop('label', axis=1) if column is None else df[column] 
+        pred = pipe.predict_proba(X)
         # print(pred[:, 1].shape, df['label'].values.shape)
         data = np.column_stack([pred[:, 1], df['label'].values])
         # data = np.concatenate([pred[:, 1], df['label'].values], )
@@ -100,7 +102,7 @@ def calc_scores(root_folder, thr=0.5, plot_names=None):
         [['f1', 'roc', 'pr']]
         .agg(['mean', 'std'])
         .round(4)
-        .sort_values([("f1", "std")])
+        .sort_values([("f1", "mean")], ascending=False)
     )
 
     scores_mean.columns = [f"{x}_{y}" for x, y in scores_mean.columns.ravel()]
