@@ -15,7 +15,8 @@ from tqdm import tqdm
 from sklearn.utils.class_weight import compute_class_weight
 from sklearn.metrics import f1_score, recall_score
 
-from src.models.models import VideoFormer, VideoMamba
+from src.models.models import VideoFormer, VideoMamba, VectorMLP
+from src.models.non_neural import KernelELMClassifier, ELMClassifier
 from src.utils.logger_setup import color_metric, color_split, dbg_dump_logits
 from src.utils.schedulers import SmartScheduler
 import pickle
@@ -123,6 +124,40 @@ def _metrics(y_true: np.ndarray, y_pred: np.ndarray, num_classes: int) -> Dict[s
     return out
 
 
+def _log_loader_feature_shape(
+    loader: DataLoader,
+    avg_mode: str,
+    segment_length: Optional[int],
+    name: str,
+) -> None:
+    first = None
+    for b in loader:
+        if b is not None:
+            first = b
+            break
+    if first is None:
+        logging.info(f"[FEATURES:{name}] loader empty")
+        return
+    try:
+        X, keep, mask = _stack_face_features(first["features"], avg_mode, segment_length=segment_length)
+    except Exception as e:
+        logging.warning(f"[FEATURES:{name}] failed to stack features: {e}")
+        return
+
+    total = len(first["features"]) if isinstance(first.get("features"), list) else "?"
+    if X.ndim == 3:
+        seq_len = int(X.shape[1])
+        feat_dim = int(X.shape[2])
+    else:
+        seq_len = 1
+        feat_dim = int(X.shape[1])
+    mask_info = f", mask_shape={tuple(mask.shape)}" if mask is not None else ""
+    logging.info(
+        f"[FEATURES:{name}] avg={avg_mode} X={tuple(X.shape)} seq_len={seq_len} "
+        f"feat_dim={feat_dim} kept={len(keep)}/{total}{mask_info}"
+    )
+
+
 def _build_model(cfg, input_dim: int, seq_len: int, num_classes: int, device: torch.device) -> nn.Module:
     model_name = cfg.model_name.lower()
 
@@ -152,11 +187,45 @@ def _build_model(cfg, input_dim: int, seq_len: int, num_classes: int, device: to
             out_features=cfg.out_features,
             num_classes=num_classes,
         )
+    elif model_name in ("vector", "mlp", "vector_mlp", "mlp_vector"):
+        model = VectorMLP(
+            input_dim=input_dim,
+            hidden_dim=cfg.hidden_dim,
+            dropout=cfg.dropout,
+            out_features=cfg.out_features,
+            num_classes=num_classes,
+        )
     else:
         raise ValueError(
-            f"Unknown model='{cfg.model_name}'. Use 'mamba' or 'transformer'."
+            f"Unknown model='{cfg.model_name}'. Use 'mamba', 'transformer', or 'vector'."
         )
     return model.to(device)
+
+
+def _collect_vector_features(
+    loader: DataLoader,
+    avg_mode: str,
+    segment_length: Optional[int] = None,
+) -> tuple[np.ndarray, np.ndarray]:
+    X_list, y_list = [], []
+    for batch in loader:
+        if batch is None:
+            continue
+        X, keep, mask = _stack_face_features(batch["features"], avg_mode, segment_length=segment_length)
+        y = _filter_labels(batch["labels"], keep)
+        if X.ndim == 3:
+            if mask is None:
+                Xv = X.mean(dim=1)
+            else:
+                denom = mask.sum(dim=1).clamp(min=1).unsqueeze(-1).to(X.dtype)
+                Xv = X.masked_fill(~mask.unsqueeze(-1), 0.0).sum(dim=1) / denom
+        else:
+            Xv = X
+        X_list.append(Xv.cpu().numpy())
+        y_list.append(y.cpu().numpy())
+    if not X_list:
+        raise RuntimeError("No samples collected from loader.")
+    return np.concatenate(X_list, axis=0), np.concatenate(y_list, axis=0)
 
 
 @torch.no_grad()
@@ -317,7 +386,7 @@ def train(
             break
     if first is None:
         raise RuntimeError("train loader is empty (or collate filtered everything).")
-    X0, _, _ = _stack_face_features(first["features"], avg_mode, segment_length=cfg.segment_length)
+    X0, keep0, mask0 = _stack_face_features(first["features"], avg_mode, segment_length=cfg.segment_length)
 
     if X0.ndim == 3:
         in_dim = int(X0.shape[2])
@@ -326,20 +395,113 @@ def train(
         in_dim = int(X0.shape[1])
         seq_len = 1
 
+    total0 = len(first["features"]) if isinstance(first.get("features"), list) else "?"
+    mask_info = f", mask_shape={tuple(mask0.shape)}" if mask0 is not None else ""
+    logging.info(
+        f"[FEATURES:train] avg={avg_mode} X={tuple(X0.shape)} seq_len={seq_len} "
+        f"feat_dim={in_dim} kept={len(keep0)}/{total0}{mask_info}"
+    )
+
     model_num_classes = getattr(cfg, "num_classes", None)
     if model_num_classes is None:
         model_num_classes = _num_classes_from_loader(mm_loader, avg_mode, segment_length=cfg.segment_length)
     metrics_num_classes = int(model_num_classes)
 
+    if dev_loaders:
+        for name, ldr in dev_loaders.items():
+            _log_loader_feature_shape(ldr, avg_mode, cfg.segment_length, f"dev:{name}")
+    if test_loaders:
+        for name, ldr in test_loaders.items():
+            _log_loader_feature_shape(ldr, avg_mode, cfg.segment_length, f"test:{name}")
+
+    # ---------------------
+    # Non-neural models
+    # ---------------------
+    model_name = str(cfg.model_name).lower()
+    if model_name in {"kelm", "kernel_elm", "elm", "catboost"}:
+        if avg_mode == "raw":
+            raise ValueError("Non-neural models require vector features. Set average_features='mean' or 'mean_std'.")
+        X_train, y_train = _collect_vector_features(mm_loader, avg_mode, segment_length=cfg.segment_length)
+
+        # optional class weights as sample weights (for catboost)
+        sample_weights = None
+        if cfg.class_weighting in ("balanced", "manual"):
+            classes = np.arange(model_num_classes)
+            if cfg.class_weighting == "balanced":
+                cw = compute_class_weight(class_weight="balanced", classes=classes, y=y_train)
+            else:
+                w = getattr(cfg, "class_weights", None)
+                if not isinstance(w, (list, tuple)) or len(w) != model_num_classes:
+                    raise ValueError(
+                        f"class_weighting='manual' requires class_weights list of length {model_num_classes}."
+                    )
+                cw = np.array([float(x) for x in w], dtype=np.float32)
+            sample_weights = cw[y_train]
+
+        if model_name in {"kelm", "kernel_elm"}:
+            clf = KernelELMClassifier(C=cfg.kelm_C, gamma=cfg.kelm_gamma)
+            clf.fit(X_train, y_train, model_num_classes)
+            predict_fn = clf.predict
+        elif model_name == "elm":
+            clf = ELMClassifier(hidden_dim=cfg.elm_hidden, activation=cfg.elm_activation, C=cfg.elm_C, seed=cfg.random_seed)
+            clf.fit(X_train, y_train, model_num_classes)
+            predict_fn = clf.predict
+        else:
+            try:
+                from catboost import CatBoostClassifier
+            except Exception as e:
+                raise ImportError("catboost is not installed. Add it to requirements.txt to use model_name='catboost'.") from e
+            clf = CatBoostClassifier(
+                iterations=cfg.catboost_iters,
+                depth=cfg.catboost_depth,
+                learning_rate=cfg.catboost_lr,
+                loss_function="Logloss",
+                verbose=False,
+            )
+            clf.fit(X_train, y_train, sample_weight=sample_weights)
+            predict_fn = lambda X: clf.predict(X).astype(int).reshape(-1)
+
+        # eval dev/test
+        best_dev, best_test = {}, {}
+        if dev_loaders:
+            for name, ldr in dev_loaders.items():
+                Xd, yd = _collect_vector_features(ldr, avg_mode, segment_length=cfg.segment_length)
+                pred = predict_fn(Xd)
+                md = _metrics(yd, pred, metrics_num_classes)
+                best_dev.update({f"{k}_{name}": v for k, v in md.items()})
+                msg = " | ".join(color_metric(k, v) for k, v in md.items())
+                logging.info(f"[{color_split('DEV')}:{name}] {msg}")
+        if test_loaders:
+            for name, ldr in test_loaders.items():
+                Xt, yt = _collect_vector_features(ldr, avg_mode, segment_length=cfg.segment_length)
+                pred = predict_fn(Xt)
+                mt = _metrics(yt, pred, metrics_num_classes)
+                best_test.update({f"{k}_{name}": v for k, v in mt.items()})
+                msg = " | ".join(color_metric(k, v) for k, v in mt.items())
+                logging.info(f"[{color_split('TEST')}:{name}] {msg}")
+
+        return best_dev, best_test
+
     if cfg.class_weighting == "none":
         ce_weights = None
         logging.info("Class weighting: none")
-    else:
+    elif cfg.class_weighting == "balanced":
         y_all = _gather_all_labels(mm_loader, avg_mode, segment_length=cfg.segment_length)
         classes = np.arange(model_num_classes)
         class_weights = compute_class_weight(class_weight="balanced", classes=classes, y=y_all)
         ce_weights = torch.tensor(class_weights, dtype=torch.float32, device=device)
         logging.info(f"Class weighting: balanced -> {class_weights.tolist()}")
+    elif cfg.class_weighting == "manual":
+        w = getattr(cfg, "class_weights", None)
+        if not isinstance(w, (list, tuple)) or len(w) != model_num_classes:
+            raise ValueError(
+                f"class_weighting='manual' requires class_weights list of length {model_num_classes}."
+            )
+        class_weights = [float(x) for x in w]
+        ce_weights = torch.tensor(class_weights, dtype=torch.float32, device=device)
+        logging.info(f"Class weighting: manual -> {class_weights}")
+    else:
+        raise ValueError(f"Unknown class_weighting: {cfg.class_weighting}")
 
     model = _build_model(cfg, in_dim, seq_len, model_num_classes, device)
 

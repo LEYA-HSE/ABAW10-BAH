@@ -15,12 +15,12 @@ from src.utils.feature_store import FeatureStore, build_cache_key, need_full_ree
 class BAHFaceDataset(Dataset):
     """
     Independent video samples.
-    CSV columns: video_name, text, absence_full, presence_full.
+    CSV columns: clip_name, absence_full, presence_full.
     Label is derived from absence_full / presence_full.
 
     Video path:
-      - if video_name is an absolute path, use it as-is
-      - otherwise: <video_dir>/<video_name>
+      - if clip_name is an absolute path, use it as-is
+      - otherwise: <video_dir>/<clip_name>
     """
 
     def __init__(
@@ -65,7 +65,7 @@ class BAHFaceDataset(Dataset):
 
         # CSV
         df = pd.read_csv(self.csv_path)
-        required = {"video_name", "absence_full", "presence_full"}
+        required = {"video_path", "label"}
         missing = required - set(df.columns)
         if missing:
             raise ValueError(
@@ -82,10 +82,19 @@ class BAHFaceDataset(Dataset):
 
         # meta (paths + labels)
         self.meta: List[Dict[str, Any]] = []
+        self._meta_rebuilt = False
         if self.save_prepared_data:
             self.meta = self.store.load_meta(
                 self.dataset_name, self.split, getattr(self.config, "random_seed", 0), self.subset_size
             )
+            if self.meta and len(self.meta) != len(self.df):
+                logging.warning(
+                    f"[BAHFaceDataset] cached meta size {len(self.meta)} does not match "
+                    f"CSV rows {len(self.df)} for {self.dataset_name}/{self.split}. "
+                    "Rebuilding meta and refreshing cache."
+                )
+                self.meta = []
+                self._meta_rebuilt = True
         if not self.meta:
             self._build_meta_only()
             if self.save_prepared_data:
@@ -145,10 +154,11 @@ class BAHFaceDataset(Dataset):
         self.meta = []
         for _, row in tqdm(self.df.iterrows(), total=len(self.df),
                            desc=f"Indexing BAH videos [{self.dataset_name}/{self.split}]"):
-            vid = str(row["video_name"])
+            vid = str(row["video_path"])
             vpath = self._video_path(self.video_dir, vid)
 
-            class_id = self._label_from_row(row)
+            # class_id = self._label_from_row(row)
+            class_id = row.get("label")
             sample_name = os.path.splitext(os.path.basename(vid))[0]
 
             self.meta.append({
@@ -175,11 +185,40 @@ class BAHFaceDataset(Dataset):
         store, header = self.store.load_modality_store(
             self.dataset_name, self.split, key, getattr(self.config, "random_seed", 0), self.subset_size
         )
+        if self._meta_rebuilt:
+            # Meta changed -> ignore old cache to avoid mixing mismatched entries.
+            store = {}
+            header = None
         if need_full_reextract(self.config, mod, header, key):
             store = {}
 
         missing = merge_missing(store, sample_names)
+        if missing and self.average_features != "raw":
+            raw_key = build_cache_key(mod, ex, self.config, avg_override="raw")
+            raw_store, raw_header = self.store.load_modality_store(
+                self.dataset_name, self.split, raw_key, getattr(self.config, "random_seed", 0), self.subset_size
+            )
+            if not need_full_reextract(self.config, mod, raw_header, raw_key):
+                filled = 0
+                for name in list(missing):
+                    raw_feats = raw_store.get(name, None)
+                    if raw_feats is None:
+                        continue
+                    agg = self._aggregate_cached_raw(raw_feats, self.average_features)
+                    if agg is not None:
+                        store[name] = agg
+                        filled += 1
+                if filled > 0:
+                    logging.info(
+                        f"[BAHFaceDataset] reused raw cache -> {self.average_features}: {filled} samples"
+                    )
+                missing = merge_missing(store, sample_names)
+
         if not missing:
+            # Save aggregated cache derived from raw so __getitem__ can load it.
+            self.store.save_modality_store(
+                self.dataset_name, self.split, key, getattr(self.config, "random_seed", 0), self.subset_size, store
+            )
             return
 
         path_by_name = {m["sample_name"]: m["video_path"] for m in self.meta}
@@ -216,6 +255,34 @@ class BAHFaceDataset(Dataset):
             self.dataset_name, self.split, key, getattr(self.config, "random_seed", 0), self.subset_size, store
         )
         torch.cuda.empty_cache()
+
+    def _aggregate_cached_raw(self, feats: Any, average: str) -> Optional[dict]:
+        """
+        Aggregate cached raw features without re-extracting.
+        Cached raw format: {'seq': Tensor [T,D]}.
+        """
+        if feats is None:
+            return None
+        if average == "raw":
+            return feats if isinstance(feats, dict) else None
+
+        if isinstance(feats, dict):
+            emb = feats.get("seq", None)
+            if emb is None:
+                emb = feats.get("embedding", None)
+        else:
+            emb = None
+
+        if emb is None or not isinstance(emb, torch.Tensor):
+            return None
+        if emb.ndim == 1:
+            emb = emb.unsqueeze(0)
+
+        if average == "mean_std":
+            return {"mean": emb.mean(dim=0), "std": emb.std(dim=0, unbiased=False)}
+        if average == "mean":
+            return {"mean": emb.mean(dim=0)}
+        return {"seq": emb}
 
     def _aggregate(self, feats: Any, average: str) -> Optional[dict]:
         """

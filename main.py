@@ -13,7 +13,7 @@ from src.utils.logger_setup import setup_logger
 from src.utils.search_utils import greedy_search, exhaustive_search
 
 from src.data_loading.dataset_builder import make_bah_dataset_and_loader
-from src.data_loading.pretrained_extractors import build_extractors_from_config
+from src.data_loading.pretrained_extractors import build_extractors_from_config, AffectNetImageProcessor
 
 from transformers import CLIPProcessor, AutoImageProcessor
 
@@ -117,7 +117,15 @@ def main():
 
     model_name = base_config.video_extractor
     try:
-        if "vit" in model_name.lower():
+        vname = model_name.lower()
+        if vname in {
+            "affectnet_efficientnet_b0",
+            "affectnet_efficientnet",
+            "affectnet_enet_b0",
+            "affectnet_effnet",
+        }:
+            face_processor = AffectNetImageProcessor(image_size=base_config.affectnet_image_size)
+        elif "vit" in vname:
             face_processor = AutoImageProcessor.from_pretrained(model_name)
         else:
             face_processor = CLIPProcessor.from_pretrained(model_name)

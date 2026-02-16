@@ -199,3 +199,50 @@ class VideoFormer(nn.Module):
             elif isinstance(m, nn.LayerNorm):
                 nn.init.constant_(m.weight, 1)
                 nn.init.constant_(m.bias, 0)
+
+
+class VectorMLP(nn.Module):
+    """
+    MLP classifier for vector inputs (e.g., mean/std embeddings).
+    Accepts [B, D] or [B, 1, D] and outputs logits [B, num_classes].
+    """
+    def __init__(
+        self,
+        input_dim=512,
+        hidden_dim=256,
+        dropout=0.1,
+        out_features=128,
+        num_classes=2,
+    ):
+        super().__init__()
+        self.feature_extractor = nn.Sequential(
+            nn.Linear(input_dim, hidden_dim),
+            nn.LayerNorm(hidden_dim),
+            nn.ReLU(),
+            nn.Dropout(dropout),
+            nn.Linear(hidden_dim, out_features),
+            nn.LayerNorm(out_features),
+            nn.ReLU(),
+            nn.Dropout(dropout),
+        )
+        self.classifier = nn.Linear(out_features, num_classes)
+        self._init_weights()
+
+    def forward(self, x, mask=None, features: bool = False):
+        if x.ndim == 3:
+            x = x.squeeze(1)
+        feats = self.feature_extractor(x)
+        logits = self.classifier(feats)
+        if features:
+            return {"prob": logits, "features": feats}
+        return logits
+
+    def _init_weights(self):
+        for m in self.modules():
+            if isinstance(m, nn.Linear):
+                nn.init.xavier_uniform_(m.weight)
+                if m.bias is not None:
+                    nn.init.constant_(m.bias, 0)
+            elif isinstance(m, nn.LayerNorm):
+                nn.init.constant_(m.weight, 1)
+                nn.init.constant_(m.bias, 0)

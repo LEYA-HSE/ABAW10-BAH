@@ -6,9 +6,12 @@ use_telegram = true # Telegram notifications (you?ll need to provide your tokens
 
 # Ambivalence dataset
 [datasets.bah_ambivalence]
-base_dir = "E:/Databases/BAH/"
-csv_path = "{base_dir}/{split}_full.csv"
-video_dir = "{base_dir}/video/{split}/"
+#base_dir = "E:/Databases/BAH/"
+#csv_path = "{base_dir}/{split}_full.csv"
+#video_dir = "{base_dir}/video/{split}/"
+base_dir = "E:/Databases/BAH_without_faces/"
+csv_path = "{base_dir}/split/{split}.csv"
+video_dir = "{base_dir}/"
 
 # ---------------------------
 # DataLoader parameters
@@ -23,10 +26,10 @@ prepare_only = false      # feature extraction only, no training
 # ---------------------------
 [train.general]
 random_seed = 42                  # fixed random seed for reproducibility (0 = random each run)
-subset_size = 100                 # limit number of samples (0 = full dataset)
+subset_size = 0                 # limit number of samples (0 = full dataset)
 batch_size = 32                   # batch size
 num_epochs = 100                  # number of epochs
-max_patience = 10                 # max epochs without improvement (Early Stopping)
+max_patience = 20                 # max epochs without improvement (Early Stopping)
 save_best_model = true            # save best model
 save_prepared_data = true         # save extracted features (embeddings)
 save_feature_path = './features/' # path to save embeddings
@@ -35,32 +38,42 @@ early_stop_on = "test"            # split for early stopping: "dev" or "test"
 checkpoint_dir = "checkpoints"
 device = "cuda"           # "cuda" or "cpu"
 selection_metric = "MF1"   # metric to track
-add_similarity = true      # compute cosine similarity of modality embeddings (used in MultiModalFusionModel)
-class_weighting = "balanced" # "none"
-num_archetypes = 9
+class_weighting = "balanced" # "none" "balanced" 
+class_weights = [1.0, 5.5]           # used when class_weighting="manual", e.g. [1.0, 2.5]
+
+# ---------------------------
+# Non-neural models (KELM / ELM / CatBoost)
+# ---------------------------
+kelm_C = 1.0
+kelm_gamma = 1.0
+elm_hidden = 512
+elm_activation = "relu"   # relu | tanh | sigmoid
+elm_C = 1.0
+catboost_iters = 300
+catboost_depth = 6
+catboost_lr = 0.1
 print_logits = false
 
 # ---------------------------
 # Model parameters
 # ---------------------------
 [train.model]
-# model to use: "mamba" or "former"
-model_name            = "mamba"
+# model to use: "mamba", "former", "vector", "kelm", "elm", or "catboost"
+model_name            = "vector"
 
-hidden_dim            = 128      # hidden state size
-out_features          = 512      # feature size before classification
-dropout               = 0.25     # dropout between layers
-gate_mode             = "none"   # t, d
+hidden_dim            = 256      # hidden state size
+out_features          = 128      # feature size before classification
+dropout               = 0.2     # dropout between layers
 
 # ---- VideoFormer parameters ----
-num_transformer_heads = 2      # number of attention heads
-positional_encoding   = false  # use positional encoding
-tr_layers             = 5      # number of transformer blocks
+num_transformer_heads = 4      # number of attention heads
+positional_encoding   = true  # use positional encoding
+tr_layers             = 3      # number of transformer blocks
 
 # ---- VideoMamba parameters ----
-mamba_d_state         = 6        # internal mamba state
+mamba_d_state         = 32        # internal mamba state
 mamba_ker_size        = 5        # kernel size
-mamba_layers          = 5        # number of mamba blocks
+mamba_layers          = 8        # number of mamba blocks
 # mamba_d_discr         = 64       # discr dim (null if not used)
 
 # ---------------------------
@@ -68,19 +81,19 @@ mamba_layers          = 5        # number of mamba blocks
 # ---------------------------
 [train.optimizer]
 optimizer = "adamw"        # optimizer type: "adam", "adamw", "sgd", "rmsprop"
-lr = 1e-5                  # initial learning rate
-weight_decay = 1e-4        # weight decay
+lr = 1e-4                  # initial learning rate
+weight_decay = 1e-3        # weight decay
 momentum = 0.9             # momentum (SGD only)
 
 # ---------------------------
 # Scheduler parameters
 # ---------------------------
 [train.scheduler]
-scheduler_type = "none" # "none", "plateau", "cosine", "onecycle" or HF-style ("huggingface_linear", "huggingface_cosine", "huggingface_cosine_with_restarts")
+scheduler_type = "onecycle" # "none", "plateau", "cosine", "onecycle" or HF-style ("huggingface_linear", "huggingface_cosine", "huggingface_cosine_with_restarts")
 warmup_ratio = 0.1         # warmup steps ratio (0.1 = 10%)
 
 [embeddings]
-average_features = "raw" # feature aggregation: "mean" | "mean_std" | "raw"
+average_features = "mean_std" # feature aggregation: "mean" | "mean_std" | "raw"
 
 # Video extractor output type:
 # "frame-cls"  ? CLS vector per frame (hidden_size, e.g., 768). Default for sequences.
@@ -89,11 +102,21 @@ average_features = "raw" # feature aggregation: "mean" | "mean_std" | "raw"
 # "pooled"     ? CLIP only: get_image_features ? [T, 512].
 video_output_mode = "frame-cls"
 
-video_extractor = "openai/clip-vit-base-patch32" # google/vit-base-patch16-224 or openai/clip-vit-base-patch32
+# video_extractor options:
+# - "openai/clip-vit-base-patch32"
+# - "google/vit-base-patch16-224"
+# - "affectnet_efficientnet_b0" (AffectNet EfficientNet checkpoint)
+video_extractor = "openai/clip-vit-base-patch32"
+
+# AffectNet EfficientNet extractor settings
+affectnet_ckpt_path = "emo_model.pt"
+affectnet_backbone = "efficientnet_b0"  # efficientnet_b0 | efficientnet_b1 | resnet18
+affectnet_image_size = 224
+affectnet_proj_dim = 0
 
 yolo_weights = "./src/data_loading/yolov8n-face.pt"
 video_mode = "stable" # "stable" (track) | "fast" (predict)
-segment_length = 2  # number of frames sampled uniformly
+segment_length = 30 # number of frames sampled uniformly
 emb_normalize = false
 
 [cache]

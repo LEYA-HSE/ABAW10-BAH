@@ -30,6 +30,9 @@ def select_uniform_frames(frames: Sequence[int], N: int) -> list[int]:
 def _to_pixel_values(image_rgb: np.ndarray, image_processor, device: str) -> Optional[torch.Tensor]:
     if image_rgb is None or image_rgb.size == 0 or image_rgb.ndim != 3:
         return None
+    if hasattr(image_processor, "to_pixel_values"):
+        pv = image_processor.to_pixel_values(image_rgb)
+        return pv.to(device) if isinstance(pv, torch.Tensor) else pv
     inputs = image_processor(images=image_rgb, return_tensors="pt")
     pv = inputs["pixel_values"]
     return pv.to(device) if isinstance(pv, torch.Tensor) else pv
@@ -133,6 +136,9 @@ def get_face_pixel_values(
     yolo_iou: float = 0.5,
     yolo_imgsz: int = 640,
     yolo_augment: bool = False,
+    debug_dir: Optional[str] = None,
+    debug_every: int = 1,
+    debug_max: int = 0,
 ) -> Tuple[str, Optional[torch.Tensor]]:
     """
     Returns: (video_name, face_pixel_values [T,3,H,W] | None)
@@ -152,18 +158,29 @@ def get_face_pixel_values(
 
     cap = cv2.VideoCapture(video_path)
     video_name = os.path.basename(video_path)
+    if not cap.isOpened():
+        logging.warning(f"[get_face_pixel_values] Failed to open video: {video_path}")
+        return video_name, None
 
     total_frames = int(cap.get(cv2.CAP_PROP_FRAME_COUNT)) or 0
-    need = set(select_uniform_frames(range(total_frames), segment_length))
+    if total_frames > 0:
+        need = set(select_uniform_frames(range(total_frames), segment_length))
+    else:
+        logging.warning(f"[get_face_pixel_values] total_frames=0 for {video_path}. Falling back to first frames.")
+        need = None
 
     batches = []
+    dbg_saved = 0
+    if debug_dir:
+        os.makedirs(debug_dir, exist_ok=True)
     t = 0
     try:
         while True:
             ok, im0 = cap.read()
             if not ok:
                 break
-            if t in need:
+            use_frame = (need is None and t < segment_length) or (need is not None and t in need)
+            if use_frame:
                 im_rgb = cv2.cvtColor(im0, cv2.COLOR_BGR2RGB)
 
                 results = _run_yolo(
@@ -189,6 +206,31 @@ def get_face_pixel_values(
                     if x2 > x1 and y2 > y1:
                         roi = im_rgb[y1:y2, x1:x2]
                         pv = _to_pixel_values(roi, image_processor, device)
+
+                # optional debug save
+                if debug_dir and (debug_max <= 0 or dbg_saved < debug_max):
+                    if debug_every <= 1 or (dbg_saved % debug_every == 0):
+                        dbg_img = im_rgb.copy()
+                        if box is not None:
+                            x1, y1, x2, y2 = box
+                            cv2.rectangle(dbg_img, (x1, y1), (x2, y2), (0, 255, 0), 2)
+                            tag = "face"
+                        else:
+                            tag = "no_face"
+                            cv2.putText(
+                                dbg_img,
+                                "NO_FACE",
+                                (10, 30),
+                                cv2.FONT_HERSHEY_SIMPLEX,
+                                1.0,
+                                (255, 0, 0),
+                                2,
+                                cv2.LINE_AA,
+                            )
+                        fname = f"{os.path.splitext(video_name)[0]}_t{t:06d}_{tag}.jpg"
+                        out_path = os.path.join(debug_dir, fname)
+                        cv2.imwrite(out_path, cv2.cvtColor(dbg_img, cv2.COLOR_RGB2BGR))
+                        dbg_saved += 1
 
                 # business-logic fallback: no bbox ? full frame
                 if pv is None:
