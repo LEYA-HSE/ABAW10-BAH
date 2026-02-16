@@ -534,9 +534,10 @@ save_nn_experiment_predictions(root_folder="data/experiments/exp_5/",
                                name="7", model=model_7,
                                datasets=list_datasets_1, device=device)
 
+# %%
 
 results, results_mean = calc_scores(root_folder="data/experiments/exp_5/",
-                                    plot_names=[])
+                                    plot_names=['3', '4', '5'])
 
 top_names = results_mean.head(12).index.tolist()
 print(results_mean.to_markdown(tablefmt="github"))
