@@ -53,7 +53,16 @@ class ConfigLoader:
         self.selection_metric = train_general.get("selection_metric", "mean_combo")
         self.add_similarity = train_general.get("add_similarity", True)
         self.class_weighting = train_general.get("class_weighting", "balanced")
-        self.num_archetypes = train_general.get("num_archetypes", 1)
+        self.class_weights = train_general.get("class_weights", None)
+        # Non-neural model params
+        self.kelm_C = float(train_general.get("kelm_C", 1.0))
+        self.kelm_gamma = float(train_general.get("kelm_gamma", 1.0))
+        self.elm_hidden = int(train_general.get("elm_hidden", 512))
+        self.elm_activation = train_general.get("elm_activation", "relu")
+        self.elm_C = float(train_general.get("elm_C", 1.0))
+        self.catboost_iters = int(train_general.get("catboost_iters", 300))
+        self.catboost_depth = int(train_general.get("catboost_depth", 6))
+        self.catboost_lr = float(train_general.get("catboost_lr", 0.1))
         self.print_logits = train_general.get("print_logits", False)
 
         # ---------------------------
@@ -107,6 +116,11 @@ class ConfigLoader:
         self.video_mode = emb_cfg.get("video_mode", "stable")
         self.segment_length = emb_cfg.get("segment_length", 20)
         self.emb_normalize = emb_cfg.get("emb_normalize", True)
+        # AffectNet EfficientNet extractor options
+        self.affectnet_ckpt_path = emb_cfg.get("affectnet_ckpt_path", "")
+        self.affectnet_backbone = emb_cfg.get("affectnet_backbone", "efficientnet_b0")
+        self.affectnet_image_size = int(emb_cfg.get("affectnet_image_size", 224))
+        self.affectnet_proj_dim = int(emb_cfg.get("affectnet_proj_dim", 0))
 
         # ---------------------------
         # Cache

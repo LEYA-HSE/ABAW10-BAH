@@ -43,7 +43,7 @@ class CacheKey:
         return human[:144]
 
 
-def build_cache_key(mod: str, extractor: Any, cfg: Any) -> CacheKey:
+def build_cache_key(mod: str, extractor: Any, cfg: Any, avg_override: Optional[str] = None) -> CacheKey:
     """
     Build CacheKey for 'face'.
     """
@@ -53,7 +53,10 @@ def build_cache_key(mod: str, extractor: Any, cfg: Any) -> CacheKey:
     fp_fn = getattr(extractor, "fingerprint", None)
     extractor_fp = fp_fn() if callable(fp_fn) else type(extractor).__name__
 
-    avg = str(getattr(cfg, "average_features", "raw")).lower()
+    if avg_override is None:
+        avg = str(getattr(cfg, "average_features", "raw")).lower()
+    else:
+        avg = str(avg_override).lower()
     frames = int(getattr(cfg, "segment_length", 30))
     pre_v = str(getattr(cfg, "preprocess_version", "v1"))
     mode = str(getattr(cfg, "video_mode", "stable"))
