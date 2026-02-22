@@ -50,7 +50,3 @@ decord==0.6.0
 
 # === Text exporter (impl=3) ===
 catboost==1.2.8
-transformers
-torch==2.6.0
-torchvision==0.21.0
-torchaudio==2.6.0

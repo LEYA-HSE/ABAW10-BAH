@@ -1,8 +1,11 @@
+import os
 import pandas as pd
 import numpy as np
 import tqdm
 
-from transformers import AutoTokenizer, AutoModel
+import pickle
+
+from transformers import AutoTokenizer, AutoModel, AutoModelForCausalLM
 import torch
 import torch.nn as nn
 import torch.optim as optim
@@ -101,6 +104,61 @@ model_name_4 = "sentence-transformers/all-MiniLM-L6-v2"
 tokenizer_4 = AutoTokenizer.from_pretrained(model_name_4)
 model_4 = AutoModel.from_pretrained(model_name_4)
 list_emb_4 = apply_func_to_datasets(list_datasets, get_embedding_4)
+
+# %%
+
+def get_embedding_5(text):
+    inputs = tokenizer_5(text, return_tensors="pt", padding=True, truncation=True, max_length=128)
+    with torch.no_grad():
+        outputs = model_5(**inputs)
+    return outputs.last_hidden_state[0, 0, :].numpy()
+
+model_name_5 = "state-spaces/mamba-370m-hf"
+
+filepath = "data/output/list_emb_5.pkl"
+if os.path.exists(filepath):
+    with open(filepath, 'rb') as f:
+        list_emb_5 = pickle.load(f)
+else:
+    tokenizer_5 = AutoTokenizer.from_pretrained(model_name_5)
+    model_5 = AutoModel.from_pretrained(model_name_5)
+
+    list_emb_5 = apply_func_to_datasets(list_datasets, get_embedding_5)
+    with open(filepath, "wb") as f:
+        pickle.dump(list_emb_5, f)
+
+# %%
+
+# def get_embedding_6(text):
+#     inputs = tokenizer_6(text, return_tensors="pt", padding=True, truncation=True, max_length=128)
+#     with torch.no_grad():
+#         outputs = model_6(**inputs)
+#     return outputs.last_hidden_state[0, 0, :].numpy()
+#
+#
+# model_name_6 = "state-spaces/mamba2-370m"
+# tokenizer_6 = AutoTokenizer.from_pretrained(model_name_6)
+# # model_6 = AutoModel.from_pretrained(model_name_6, ignore_mismatched_sizes=True)
+# model_6 = AutoModelForCausalLM.from_pretrained(model_name_6, ignore_mismatched_sizes=True)
+# list_emb_6 = apply_func_to_datasets(list_datasets, get_embedding_6)
+#
+# with open("data/output/list_emb_6.pkl", "wb") as f:
+#     pickle.dump(list_emb_6, f)
+
+# %%
+
+def get_embedding_6(text):
+    inputs = tokenizer_6(text, return_tensors="pt", padding=True,
+                         truncation=True, max_length=1024)
+    with torch.no_grad():
+        outputs = model_6(**inputs)
+    return outputs.last_hidden_state[0, 0, :].numpy()
+
+
+model_name_6 = "michellejieli/emotion_text_classifier"
+tokenizer_6 = AutoTokenizer.from_pretrained(model_name_6)
+model_6 = AutoModel.from_pretrained(model_name_6)
+list_emb_6 = apply_func_to_datasets(list_datasets, get_embedding_6)
 
 # %%
 
@@ -652,10 +710,78 @@ save_experiment_predictions(root_folder="data/experiments/exp_3/",
 
 # %%
 
+X_train = list_emb_5[0][1]
+y_train = X_train['label']
+X_train = X_train.drop('label', axis=1)
+
+X_val = list_emb_5[1][1]
+y_val = X_val['label']
+X_val = X_val.drop('label', axis=1)
+
+model_15 = CatBoostClassifier(
+    iterations=10,
+    loss_function='Logloss',
+    # auto_class_weights='Balanced',
+    learning_rate=0.005,
+    max_depth=8,
+    eval_metric='F1',
+    random_seed=42,
+    verbose=100,
+)
+
+model_15.fit(
+    X_train, y_train,
+    eval_set=(X_val, y_val),
+    early_stopping_rounds=200,
+    use_best_model=True
+)
+
+save_experiment_predictions(root_folder="data/experiments/exp_3/",
+                            name='15',
+                            pipe=model_15,
+                            datasets=list_emb_5,
+                            column=None,
+                            )
+# %%
+
+X_train = list_emb_6[0][1]
+y_train = X_train['label']
+X_train = X_train.drop('label', axis=1)
+
+X_val = list_emb_6[1][1]
+y_val = X_val['label']
+X_val = X_val.drop('label', axis=1)
+
+model_16 = CatBoostClassifier(
+    iterations=150,
+    loss_function='Logloss',
+    # auto_class_weights='Balanced',
+    learning_rate=0.05,
+    max_depth=3,
+    eval_metric='F1',
+    random_seed=42,
+    verbose=50,
+)
+
+model_16.fit(
+    X_train, y_train,
+    eval_set=(X_val, y_val),
+    # early_stopping_rounds=500,
+    # use_best_model=True
+)
+
+save_experiment_predictions(root_folder="data/experiments/exp_3/",
+                            name='16',
+                            pipe=model_16,
+                            datasets=list_emb_6,
+                            column=None,
+                            )
+
+
 results, results_mean = calc_scores(root_folder="data/experiments/exp_3/",
                                     plot_names=['14', '3'])
 
-top_names = results_mean.head(12).index.tolist()
+top_names = results_mean.head(6).index.tolist()
 print(results_mean.to_markdown(tablefmt="github"))
 print()
 print(results[results['name'].isin(top_names)].to_markdown(tablefmt="github"))
