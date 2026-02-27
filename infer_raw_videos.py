@@ -20,10 +20,10 @@ from src.models.models import VectorMLP
 
 # fixed model (as requested)
 CHECKPOINT_PATH = Path(
-    r"D:/work/ABAW26-face_trainer_baseline/results/results_vector_2026-02-18_16-23-03/checkpoints/combo_130/best_ep28_mf1avg_0.6267.pt"
+    r"best_model_weights.pt"
 )
 CONFIG_PATH = Path(
-    r"D:/work/ABAW26-face_trainer_baseline/results/results_vector_2026-02-18_16-23-03/config_copy.toml"
+    r"best_config_copy.toml"
 )
 VIDEO_EXTS = {".mp4", ".avi", ".mov", ".mkv", ".m4v", ".webm"}
 
