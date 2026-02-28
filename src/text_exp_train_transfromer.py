@@ -70,6 +70,10 @@ def save_nn_experiment_predictions(root_folder, name, model, datasets, device):
         except (TypeError, OverflowError):
             return False
 
+    # save model
+    filepath = os.path.join(root_folder, f"{name}__model.pt")
+    torch.save(model.state_dict(), filepath)
+
     # Проверка словаря
     # params = {}
     # for key, value in pipe.get_params().items():
