@@ -12,7 +12,7 @@ class VideoPredictor:
         self.device = torch.device("cuda" if torch.cuda.is_available() else "cpu")
         
         self.image_processor = VideoMAEImageProcessor.from_pretrained(config_dir)
-      
+        
         self.model = VideoMAEForVideoClassification.from_pretrained(
             "MCG-NJU/videomae-base-finetuned-kinetics",
             num_labels=2,
@@ -29,37 +29,35 @@ class VideoPredictor:
     def _get_video_frames(self, video_path, num_frames=16):
         vr = VideoReader(video_path, ctx=cpu(0))
         total_frames = len(vr)
-        
         indices = np.linspace(0, total_frames - 1, num_frames).astype(int)
         frames = vr.get_batch(indices).asnumpy()
         return list(frames)
 
     def predict(self, video_path):
-
         frames = self._get_video_frames(video_path)
         inputs = self.image_processor(frames, return_tensors="pt")
         inputs = {k: v.to(self.device) for k, v in inputs.items()}
         
         with torch.no_grad():
-            outputs = self.model(**inputs)
+            outputs = self.model(**inputs, output_hidden_states=True)
+            
             logits = outputs.logits
+            
             probs = torch.softmax(logits, dim=-1)
+            
+            last_hidden_state = outputs.hidden_states[-1]
+            embeddings = last_hidden_state.mean(dim=1) 
             
             conf, pred_idx = torch.max(probs, dim=-1)
             
-        result = {
+        return {
             "label": self.classes[pred_idx.item()],
             "confidence": conf.item(),
-            "probs": probs.cpu().numpy().tolist()
+            "logits": logits.cpu().numpy().tolist()[0], 
+            "probs": probs.cpu().numpy().tolist()[0], 
+            "embeddings": embeddings.cpu().numpy().tolist()[0]
         }
-        return result
 
-
-# Создаем объект предиктора 
 predictor = VideoPredictor(model_path='/content/best_model.pth', config_dir='/content/')
-
-# Делаем предсказание
 video_file = "/content/0123.mp4"
-prediction = predictor.predict(video_file)
-# Если вывести prediction, то получаем итог: уверенность/неуверенность и вероятность классов
-
+result = predictor.predict(video_file)
