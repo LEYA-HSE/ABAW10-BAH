@@ -101,7 +101,7 @@ def train(model, data_train_loader, data_valid_loader,
 
     model.to(device)
 
-    for epoch in range(num_epoch):
+    for epoch in range(1, num_epoch + 1):
         model.train()
         epoch_loss = 0.0
         for batch in data_train_loader:
@@ -295,7 +295,7 @@ model_3 = train(model_3, train_loader, val_loader,
                 criterion=torch.nn.BCEWithLogitsLoss(), 
                 optimizer=optimizer_3, 
                 device=device, 
-                num_epoch=10)
+                num_epoch=9)
 
 save_nn_experiment_predictions(root_folder="data/experiments/exp_5/",
                                name="3", model=model_3,
@@ -545,9 +545,9 @@ class ClassificationModel(torch.nn.Module):
     def __init__(self, bert_model):
         super(ClassificationModel, self).__init__()
         self.bert = bert_model
-        self.fc = torch.nn.Linear(768, 128)
+        self.fc = torch.nn.Linear(768, 64)
         self.dropout = torch.nn.Dropout(0.2)
-        self.fc2 = torch.nn.Linear(128, 1)
+        self.fc2 = torch.nn.Linear(64, 1)
 
     def forward(self, input_ids, attention_mask):
         outputs = self.bert(input_ids=input_ids, attention_mask=attention_mask)
@@ -574,7 +574,8 @@ for layer in list(model_base_1.children())[-2:]:
         param.requires_grad = True
         
 model_8 = ClassificationModel(model_base_1)
-optimizer_8 = torch.optim.SGD(model_8.parameters(), lr=0.001)
+# optimizer_8 = torch.optim.SGD(model_8.parameters(), lr=0.001)
+optimizer_8 = torch.optim.AdamW(model_8.parameters(), lr=1e-5)
 device = torch.device('cuda') if torch.cuda.is_available() else torch.device('cpu')
 
 train_loader = create_dataloader(tokenizer_1, train_df, max_length=1024)
@@ -591,16 +592,134 @@ model_8 = train(model_8, train_loader, val_loader,
                 criterion=torch.nn.BCEWithLogitsLoss(), 
                 optimizer=optimizer_8, 
                 device=device, 
-                num_epoch=10)
+                num_epoch=4)
 
 save_nn_experiment_predictions(root_folder="data/experiments/exp_5/",
                                name="8", model=model_8,
                                datasets=list_datasets_1, device=device)
 
+# %%
 
+# Define a simple classification layer on top of BERT
+class ClassificationModel(torch.nn.Module):
+    def __init__(self, bert_model):
+        super(ClassificationModel, self).__init__()
+        self.bert = bert_model
+        self.fc = torch.nn.Linear(768, 64)
+        self.dropout = torch.nn.Dropout(0.1)
+        self.fc2 = torch.nn.Linear(64, 1)
+
+    def forward(self, input_ids, attention_mask):
+        outputs = self.bert(input_ids=input_ids, attention_mask=attention_mask)
+        pooled_output = outputs.last_hidden_state[:, 0, :]
+        logits = self.fc(pooled_output)
+        logits = self.dropout(logits)
+        logits = self.fc2(logits)
+
+        return logits
+
+    def get_params(self):
+        return {}
+
+model_name_1 = "michellejieli/emotion_text_classifier"
+tokenizer_1 = AutoTokenizer.from_pretrained(model_name_1)
+model_base_1 = AutoModel.from_pretrained(model_name_1)
+
+# Freeze all layers
+for param in model_base_1.parameters():
+    param.requires_grad = False
+
+for layer in list(model_base_1.children())[-2:]:
+    for param in layer.parameters():
+        param.requires_grad = True
+        
+model_9 = ClassificationModel(model_base_1)
+optimizer_9 = torch.optim.AdamW(model_9.parameters(), lr=1e-5)
+device = torch.device('cuda') if torch.cuda.is_available() else torch.device('cpu')
+
+train_loader = create_dataloader(tokenizer_1, train_df, max_length=1024)
+val_loader = create_dataloader(tokenizer_1, val_df, max_length=1024)
+test_loader = create_dataloader(tokenizer_1, test_df, max_length=1024)
+
+list_datasets_1 = [
+    ('train', train_loader, train_df['label']),
+    ('val', val_loader, val_df['label']),
+    ('test', test_loader, test_df['label']),
+]
+
+model_9 = train(model_9, train_loader, val_loader,
+                criterion=torch.nn.BCEWithLogitsLoss(), 
+                optimizer=optimizer_9, 
+                device=device, 
+                num_epoch=5)
+
+save_nn_experiment_predictions(root_folder="data/experiments/exp_5/",
+                               name="9", model=model_9,
+                               datasets=list_datasets_1, device=device)
+
+# %%
+
+# Define a simple classification layer on top of BERT
+class ClassificationModel(torch.nn.Module):
+    def __init__(self, bert_model):
+        super(ClassificationModel, self).__init__()
+        self.bert = bert_model
+        self.fc = torch.nn.Linear(768, 64)
+        self.dropout = torch.nn.Dropout(0.2)
+        self.fc2 = torch.nn.Linear(64, 1)
+
+    def forward(self, input_ids, attention_mask):
+        outputs = self.bert(input_ids=input_ids, attention_mask=attention_mask)
+        pooled_output = outputs.last_hidden_state[:, 0, :]
+        logits = self.fc(pooled_output)
+        logits = self.dropout(logits)
+        logits = self.fc2(logits)
+
+        return logits
+
+    def get_params(self):
+        return {}
+
+model_name_1 = "michellejieli/emotion_text_classifier"
+tokenizer_1 = AutoTokenizer.from_pretrained(model_name_1)
+model_base_1 = AutoModel.from_pretrained(model_name_1)
+
+# Freeze all layers
+for param in model_base_1.parameters():
+    param.requires_grad = False
+
+for layer in list(model_base_1.children())[-2:]:
+    for param in layer.parameters():
+        param.requires_grad = True
+        
+model_10 = ClassificationModel(model_base_1)
+optimizer_10 = torch.optim.AdamW(model_10.parameters(), lr=1e-5)
+device = torch.device('cuda') if torch.cuda.is_available() else torch.device('cpu')
+
+train_loader = create_dataloader(tokenizer_1, train_df, max_length=1400)
+val_loader = create_dataloader(tokenizer_1, val_df, max_length=1400)
+test_loader = create_dataloader(tokenizer_1, test_df, max_length=1400)
+
+list_datasets_1 = [
+    ('train', train_loader, train_df['label']),
+    ('val', val_loader, val_df['label']),
+    ('test', test_loader, test_df['label']),
+]
+
+model_10 = train(model_10, train_loader, val_loader,
+                criterion=torch.nn.BCEWithLogitsLoss(), 
+                optimizer=optimizer_10, 
+                device=device, 
+                num_epoch=10)
+
+save_nn_experiment_predictions(root_folder="data/experiments/exp_5/",
+                               name="10", model=model_10,
+                               datasets=list_datasets_1, device=device)
+
+# %%
 
 results, results_mean = calc_scores(root_folder="data/experiments/exp_5/",
-                                    plot_names=['3', '4', '5'])
+                                    plot_names=['3', '4', '5', '9'])
 
 top_names = results_mean.head(12).index.tolist()
 print(results_mean.to_markdown(tablefmt="github"))

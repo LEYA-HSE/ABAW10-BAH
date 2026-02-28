@@ -60,12 +60,10 @@ def model_inference(text_list, tokenizer, model,
 
     with torch.no_grad():
         for batch in data_loader:
-            # Перенос данных на устройство
             input_ids = batch['input_ids'].to(device)
             attention_mask = batch['attention_mask'].to(device)
             
             logits = model(input_ids, attention_mask)
-            
             preds = sigmoid(logits).cpu().numpy().flatten()
            
             all_preds.extend(preds)
@@ -103,8 +101,7 @@ model_3 = ClassificationModel(model_base_1)
 device = torch.device('cuda') if torch.cuda.is_available() else torch.device('cpu')
 
 # load pre-train model
-# filepath = os.path.join("models/", "exp_5__model_3.pt")
-filepath = "./data/experiments/exp_5/3__model.pt"
+filepath = os.path.join("models/", "exp_5_model_3.pt")
 model_3.load_state_dict(torch.load(filepath, weights_only=True))
 model_3.eval()
 
@@ -113,6 +110,7 @@ model_3.eval()
 text_list = ["hello world", "test", "test", "hello world"]
 prediction = model_inference(text_list, tokenizer_1, model_3, device, max_length=256)
 print(prediction)
+# >>> [0.31802124 0.36236936 0.36236936 0.31802124]
 
 # for datasets
 for name, filepath in [
@@ -131,3 +129,9 @@ for name, filepath in [
     score = round(score, 4)
 
     print(f"{name:5s} f1 score: {score}")
+
+
+# 6 & Text (full) & Transformer(Emotion-text-classifier) & Fune-tuning & 69.28 & \textbf{70.72} & 70.00 & \\
+# train f1 score: 0.7363
+# valid f1 score: 0.6928
+# test  f1 score: 0.7072
