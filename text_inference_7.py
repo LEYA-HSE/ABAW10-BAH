@@ -101,7 +101,8 @@ model_3 = ClassificationModel(model_base_1)
 device = torch.device('cuda') if torch.cuda.is_available() else torch.device('cpu')
 
 # load pre-train model
-filepath = os.path.join("models/", "6__exp_5_model_3.pt")
+filepath = os.path.join("models/", "7__exp_5_model_4.pt")
+# filepath = "./data/experiments/exp_5/4__model.pt"
 model_3.load_state_dict(torch.load(filepath, weights_only=True))
 model_3.eval()
 
@@ -110,7 +111,7 @@ model_3.eval()
 text_list = ["hello world", "test", "test", "hello world"]
 prediction = model_inference(text_list, tokenizer_1, model_3, device, max_length=256)
 print(prediction)
-# >>> [0.31802124 0.36236936 0.36236936 0.31802124]
+# >>> [0.42449608 0.29468128 0.29468128 0.42449608]
 
 # for datasets
 for name, filepath in [
@@ -131,7 +132,7 @@ for name, filepath in [
     print(f"{name:5s} f1 score: {score}")
 
 
-# 6 & Text (full) & Transformer(Emotion-text-classifier) & Fune-tuning & 69.28 & \textbf{70.72} & 70.00 & \\
-# train f1 score: 0.7363
-# valid f1 score: 0.6928
-# test  f1 score: 0.7072
+# 7 & Text (full) & Transformer(Emotion-english-distilroberta-base) & Fune-tuning & 68.54 & \textbf{71.49} & \textbf{70.02} & \\
+# train f1 score: 0.7337
+# valid f1 score: 0.6854
+# test  f1 score: 0.7149
