@@ -72,7 +72,7 @@ def save_nn_experiment_predictions(root_folder, name, model, datasets, device):
 
     # save model
     filepath = os.path.join(root_folder, f"{name}__model.pt")
-    torch.save(model.state_dict(), filepath)
+    torch.save(model.state_dict(), filepath, weight_only=True)
 
     # Проверка словаря
     # params = {}

@@ -4,11 +4,22 @@ import polars as pl
 import pandas as pd
 import numpy as np
 
+import argparse
+from pathlib import Path
+import pickle
+
 import torch
 from torch.utils.data import DataLoader, Dataset
 from transformers import AutoTokenizer, AutoModel
 
 from sklearn.metrics import f1_score
+
+
+def parse_args():
+    p = argparse.ArgumentParser()
+    p.add_argument("--inp", type=Path, required=True)
+    p.add_argument("--out", type=Path, required=True)
+    return p.parse_args()
 
 
 def read_split_dataset(filepath):
@@ -22,7 +33,8 @@ def read_split_dataset(filepath):
 
 
 class TextDataset(Dataset):
-    def __init__(self, texts, tokenizer, max_length):
+    def __init__(self, videos, texts, tokenizer, max_length):
+        self.videos = videos
         self.texts = texts
         self.tokenizer = tokenizer
         self.max_length = max_length
@@ -44,6 +56,7 @@ class TextDataset(Dataset):
         return {
             'input_ids': encoding['input_ids'].flatten(),
             'attention_mask': encoding['attention_mask'].flatten(),
+            'video_name': self.videos[idx],
         }
 
 
@@ -54,22 +67,26 @@ def model_inference(text_list, tokenizer, model,
     data_loader = DataLoader(dataset, batch_size=batch_size)
 
     model.to(device)
-    all_preds = []
     
     sigmoid = torch.nn.Sigmoid()
 
     with torch.no_grad():
+        out = {}
         for batch in data_loader:
             input_ids = batch['input_ids'].to(device)
             attention_mask = batch['attention_mask'].to(device)
+            rel_key = batch['video_name']
             
-            logits = model(input_ids, attention_mask)
-            preds = sigmoid(logits).cpu().numpy().flatten()
-           
-            all_preds.extend(preds)
-    
-    return np.array(all_preds)
+            logits, embeddings = model(input_ids, attention_mask)
+            prob = sigmoid(logits)
 
+            out[rel_key] = {
+                "prob": prob.detach().cpu().numpy().astype("float32"),
+                "logits": logits.detach().cpu().numpy().astype("float32"),
+                "embeddings": embeddings.detach().cpu().numpy().astype("float32"),
+            }
+           
+    return out
 
 # Define a simple classification layer on top of BERT
 class ClassificationModel(torch.nn.Module):
@@ -84,52 +101,47 @@ class ClassificationModel(torch.nn.Module):
         outputs = self.bert(input_ids=input_ids, attention_mask=attention_mask)
         pooled_output = outputs.last_hidden_state[:, 0, :]
         logits = self.fc(pooled_output)
-        logits = self.dropout(logits)
-        logits = self.fc2(logits)
+        emb = self.dropout(logits)
+        logits = self.fc2(emb)
 
-        return logits
+        return logits, emb
 
     def get_params(self):
         return {}
 
 
-model_name_1 = "michellejieli/emotion_text_classifier"
-tokenizer_1 = AutoTokenizer.from_pretrained(model_name_1)
-model_base_1 = AutoModel.from_pretrained(model_name_1)
-         
-model_3 = ClassificationModel(model_base_1)
-device = torch.device('cuda') if torch.cuda.is_available() else torch.device('cpu')
+def main():
+    args = parse_args()
 
-# load pre-train model
-filepath = os.path.join("models/", "6__exp_5_model_3.pt")
-model_3.load_state_dict(torch.load(filepath, weights_only=True))
-model_3.eval()
+    model_name_1 = "michellejieli/emotion_text_classifier"
+    tokenizer_1 = AutoTokenizer.from_pretrained(model_name_1)
+    model_base_1 = AutoModel.from_pretrained(model_name_1)
+            
+    model_3 = ClassificationModel(model_base_1)
+    device = torch.device('cuda') if torch.cuda.is_available() else torch.device('cpu')
 
-# Inference
-# for list with strings
-text_list = ["hello world", "test", "test", "hello world"]
-prediction = model_inference(text_list, tokenizer_1, model_3, device, max_length=256)
-print(prediction)
-# >>> [0.31802124 0.36236936 0.36236936 0.31802124]
+    # load pre-train model
+    filepath = str(Path("./models/6__exp_5_model_3.pt")) 
+    model_3.load_state_dict(torch.load(filepath, weights_only=True))
+    model_3.eval()
 
-# for datasets
-for name, filepath in [
-    ("train", "data/input/split/train.txt"),
-    ("valid", "data/input/split/val.txt"),
-    ("test", "data/input/split/test.txt"),
-]:
-    df = read_split_dataset(filepath)
+    # Inference
+    df = read_split_dataset(args.inp)
 
+    video_list = df['file'].values.tolist()
     text_list = df['text'].values.tolist()
-    true_labels = df['label'].astype(int).values
 
-    pred_proba = model_inference(text_list, tokenizer_1, model_3, device, max_length=256)
-    pred_labels = (pred_proba > 0.5).astype(int)
-    score = f1_score(y_true=true_labels, y_pred=pred_labels, average='macro')
-    score = round(score, 4)
+    out_dict = model_inference(video_list, text_list,
+                               tokenizer_1, model_3, 
+                               device, max_length=256)
 
-    print(f"{name:5s} f1 score: {score}")
+    args.out.parent.mkdir(parents=True, exist_ok=True)
+    with args.out.open("wb") as f:
+        pickle.dump(out_dict, f, protocol=pickle.HIGHEST_PROTOCOL)
 
+
+if __name__ == "__main__":
+    main()
 
 # 6 & Text (full) & Transformer(Emotion-text-classifier) & Fune-tuning & 69.28 & \textbf{70.72} & 70.00 & \\
 # train f1 score: 0.7363
