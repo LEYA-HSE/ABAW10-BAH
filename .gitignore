@@ -190,3 +190,4 @@ data/
 catboost_info/
 output/
 src/__pycache__/
+output/

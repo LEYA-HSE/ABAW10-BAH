@@ -1,5 +1,3 @@
-import os
-
 import polars as pl
 import pandas as pd
 import numpy as np
@@ -19,6 +17,7 @@ def parse_args():
     p = argparse.ArgumentParser()
     p.add_argument("--inp", type=Path, required=True)
     p.add_argument("--out", type=Path, required=True)
+    p.add_argument("-with_score", action='store_true', required=False)
     return p.parse_args()
 
 
@@ -60,11 +59,10 @@ class TextDataset(Dataset):
         }
 
 
-def model_inference(text_list, tokenizer, model,
-                    device, max_length, batch_size=32):
+def model_inference(video_list, text_list, tokenizer, model, device, max_length):
 
-    dataset = TextDataset(text_list, tokenizer, max_length=max_length)
-    data_loader = DataLoader(dataset, batch_size=batch_size)
+    dataset = TextDataset(video_list, text_list, tokenizer, max_length=max_length)
+    data_loader = DataLoader(dataset, batch_size=1)
 
     model.to(device)
     
@@ -75,9 +73,11 @@ def model_inference(text_list, tokenizer, model,
         for batch in data_loader:
             input_ids = batch['input_ids'].to(device)
             attention_mask = batch['attention_mask'].to(device)
-            rel_key = batch['video_name']
+            rel_key = batch['video_name'][0]
             
             logits, embeddings = model(input_ids, attention_mask)
+            logits = logits.squeeze(0)
+            embeddings = embeddings.squeeze(0)
             prob = sigmoid(logits)
 
             out[rel_key] = {
@@ -122,7 +122,7 @@ def main():
 
     # load pre-train model
     filepath = str(Path("./models/6__exp_5_model_3.pt")) 
-    model_3.load_state_dict(torch.load(filepath, weights_only=True))
+    model_3.load_state_dict(torch.load(filepath, weights_only=False))
     model_3.eval()
 
     # Inference
@@ -133,11 +133,18 @@ def main():
 
     out_dict = model_inference(video_list, text_list,
                                tokenizer_1, model_3, 
-                               device, max_length=256)
+                               device=device, max_length=256)
 
     args.out.parent.mkdir(parents=True, exist_ok=True)
+    print(f"{args.out} file was saved")
     with args.out.open("wb") as f:
         pickle.dump(out_dict, f, protocol=pickle.HIGHEST_PROTOCOL)
+
+    if args.with_score:
+        pred_prob = np.array([out_dict[x]['prob'][0] for x in video_list])
+        pred_labels = (pred_prob > 0.5).astype(int)
+        score = f1_score(df['label'].astype(int).values.tolist(), pred_labels, average='macro')
+        print(f"f1 score: {score:.4f}")
 
 
 if __name__ == "__main__":
