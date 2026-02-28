@@ -92,24 +92,23 @@ class ClassificationModel(torch.nn.Module):
     def get_params(self):
         return {}
 
+model_name_2 = "j-hartmann/emotion-english-distilroberta-base"
+tokenizer_2 = AutoTokenizer.from_pretrained(model_name_2)
+model_base_2 = AutoModel.from_pretrained(model_name_2)
 
-model_name_1 = "michellejieli/emotion_text_classifier"
-tokenizer_1 = AutoTokenizer.from_pretrained(model_name_1)
-model_base_1 = AutoModel.from_pretrained(model_name_1)
-         
-model_3 = ClassificationModel(model_base_1)
+model_4 = ClassificationModel(model_base_2)
 device = torch.device('cuda') if torch.cuda.is_available() else torch.device('cpu')
 
 # load pre-train model
 filepath = os.path.join("models/", "7__exp_5_model_4.pt")
 # filepath = "./data/experiments/exp_5/4__model.pt"
-model_3.load_state_dict(torch.load(filepath, weights_only=True))
-model_3.eval()
+model_4.load_state_dict(torch.load(filepath, weights_only=True))
+model_4.eval()
 
 # Inference
 # for list with strings
 text_list = ["hello world", "test", "test", "hello world"]
-prediction = model_inference(text_list, tokenizer_1, model_3, device, max_length=256)
+prediction = model_inference(text_list, tokenizer_2, model_4, device, max_length=256)
 print(prediction)
 # >>> [0.42449608 0.29468128 0.29468128 0.42449608]
 
@@ -124,7 +123,7 @@ for name, filepath in [
     text_list = df['text'].values.tolist()
     true_labels = df['label'].astype(int).values
 
-    pred_proba = model_inference(text_list, tokenizer_1, model_3, device, max_length=256)
+    pred_proba = model_inference(text_list, tokenizer_2, model_4, device, max_length=256)
     pred_labels = (pred_proba > 0.5).astype(int)
     score = f1_score(y_true=true_labels, y_pred=pred_labels, average='macro')
     score = round(score, 4)

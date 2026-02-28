@@ -1,6 +1,7 @@
 import os
 import json
 import glob
+import pickle
 
 import pandas as pd
 import numpy as np
@@ -28,6 +29,11 @@ def save_experiment_predictions(root_folder, name, pipe, datasets, column='text'
     print(f"file {filepath} was saved")
     with open(filepath, 'w') as f:
         json.dump(params, f, indent=4)
+
+    filepath = os.path.join(root_folder, f"{name}__model.pkl")
+    print(f"file {filepath} was saved")
+    with open(filepath, 'wb') as f:
+        pickle.dump(pipe, f)
 
     for dtype, df in datasets:
         X = df.drop('label', axis=1) if column is None else df[column] 
