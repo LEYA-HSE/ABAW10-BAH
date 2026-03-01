@@ -72,7 +72,7 @@ def save_nn_experiment_predictions(root_folder, name, model, datasets, device):
 
     # save model
     filepath = os.path.join(root_folder, f"{name}__model.pt")
-    torch.save(model.state_dict(), filepath, weight_only=True)
+    torch.save(model.state_dict(), filepath)
 
     # Проверка словаря
     # params = {}
@@ -133,7 +133,44 @@ train_df = pd.read_parquet("data/output/split_train.parquet")
 val_df = pd.read_parquet("data/output/split_val.parquet")
 test_df = pd.read_parquet("data/output/split_test.parquet")
 
-print(train_df.shape, val_df.shape, test_df.shape)
+
+def word_stats(df, words_list):
+    all_names = list(words_list)
+
+    df['len'] = df['text'].map(len)
+    all_names.append('len')
+
+    for x in words_list:
+        name = f"first_{x}"
+        df[name] = df['text'].map(lambda y: y.find(x))
+        all_names.append(name)
+
+        name = f"last_{x}"
+        df[name] = df['text'].map(lambda y: y.rfind(x))
+        all_names.append(name)
+
+        df[x] = df['text'].map(lambda y: x in y).astype(int)
+
+    return df, all_names
+
+words_list = ['but', 'been', 'stop', 'usually', 'love',
+              'my', 'want', 'much', 'up', 'off']
+pattern = '|'.join(words_list)
+
+train_wo_df = train_df.copy(True)
+train_wo_df['text'] = train_wo_df['text'].str.replace(pattern, "", regex=True)
+
+val_wo_df = val_df.copy(True)
+val_wo_df['text'] = val_wo_df['text'].str.replace(pattern, "", regex=True)
+
+test_wo_df = test_df.copy(True)
+test_wo_df['text'] = test_wo_df['text'].str.replace(pattern, "", regex=True)
+
+train_wo_df, all_names = word_stats(train_wo_df, words_list)
+print(train_wo_df[all_names].describe().round(2).T)
+print(train_wo_df[words_list + ['label']].corr().round(2))
+
+print(train_wo_df.shape, val_wo_df.shape, test_wo_df.shape)
 
 # %%
 
@@ -715,6 +752,65 @@ model_10 = train(model_10, train_loader, val_loader,
 save_nn_experiment_predictions(root_folder="data/experiments/exp_5/",
                                name="10", model=model_10,
                                datasets=list_datasets_1, device=device)
+# %%
+
+# Define a simple classification layer on top of BERT
+class ClassificationModel(torch.nn.Module):
+    def __init__(self, bert_model):
+        super(ClassificationModel, self).__init__()
+        self.bert = bert_model
+        self.fc = torch.nn.Linear(768, 128)
+        self.dropout = torch.nn.Dropout(0.2)
+        self.fc2 = torch.nn.Linear(128, 1)
+
+    def forward(self, input_ids, attention_mask):
+        outputs = self.bert(input_ids=input_ids, attention_mask=attention_mask)
+        pooled_output = outputs.last_hidden_state[:, 0, :]
+        logits = self.fc(pooled_output)
+        logits = self.dropout(logits)
+        logits = self.fc2(logits)
+
+        return logits
+
+    def get_params(self):
+        return {}
+
+model_name_1 = "michellejieli/emotion_text_classifier"
+tokenizer_1 = AutoTokenizer.from_pretrained(model_name_1)
+model_base_1 = AutoModel.from_pretrained(model_name_1)
+
+# Freeze all layers
+for param in model_base_1.parameters():
+    param.requires_grad = False
+
+for layer in list(model_base_1.children())[-2:]:
+    for param in layer.parameters():
+        param.requires_grad = True
+        
+model_11 = ClassificationModel(model_base_1)
+optimizer_11 = torch.optim.SGD(model_11.parameters(), lr=0.001)
+device = torch.device('cuda') if torch.cuda.is_available() else torch.device('cpu')
+
+train_loader = create_dataloader(tokenizer_1, train_wo_df)
+val_loader = create_dataloader(tokenizer_1, val_wo_df)
+test_loader = create_dataloader(tokenizer_1, test_wo_df)
+
+list_datasets_11 = [
+    ('train', train_loader, train_wo_df['label']),
+    ('val', val_loader, val_wo_df['label']),
+    ('test', test_loader, test_wo_df['label']),
+]
+
+model_11 = train(model_11, train_loader, val_loader,
+                criterion=torch.nn.BCEWithLogitsLoss(), 
+                optimizer=optimizer_11, 
+                device=device, 
+                num_epoch=20)
+
+save_nn_experiment_predictions(root_folder="data/experiments/exp_5/",
+                               name="11", model=model_11,
+                               datasets=list_datasets_11, device=device)
+
 
 # %%
 

@@ -23,6 +23,34 @@ print(train_df.shape, val_df.shape, test_df.shape)
 
 # %%
 
+def word_stats(df, words_list):
+    all_names = list(words_list)
+
+    df['len'] = df['text'].map(len)
+    all_names.append('len')
+
+    for x in words_list:
+        name = f"first_{x}"
+        df[name] = df['text'].map(lambda y: y.find(x))
+        all_names.append(name)
+
+        name = f"last_{x}"
+        df[name] = df['text'].map(lambda y: y.rfind(x))
+        all_names.append(name)
+
+        df[x] = df['text'].map(lambda y: x in y).astype(int)
+
+    return df, all_names
+
+words_list = ['but', 'been', 'stop', 'usually', 'love',
+              'my', 'want', 'much', 'up', 'off']
+
+train_df, all_names = word_stats(train_df, words_list)
+print(train_df[all_names].describe().round(2).T)
+print(train_df[words_list + ['label']].corr().round(2))
+
+# %%
+
 pipeline_1 = Pipeline([
     ('tfidf', TfidfVectorizer(
         ngram_range=(1, 3),
@@ -39,6 +67,12 @@ pipeline_1 = Pipeline([
 ])
 
 pipeline_1.fit(train_df['text'], train_df['label'])
+
+coef = pipeline_1.steps[-1][1].get_feature_importance()
+columns = pipeline_1.steps[0][1].get_feature_names_out()
+imp = pd.Series(coef, index=columns)
+imp = imp.sort_values(ascending=False)
+imp.to_csv("data/experiments/exp_1/1_imp.csv")
 
 save_experiment_predictions(root_folder="data/experiments/exp_1/",
                             name='1',
