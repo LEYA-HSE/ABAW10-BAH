@@ -4,88 +4,402 @@ import logging
 import os
 import shutil
 import datetime
-import toml
-import requests
+from pathlib import Path
 
-from tqdm import tqdm
+import toml
 from src.utils.config_loader import ConfigLoader
 from src.utils.logger_setup import setup_logger
-from src.utils.search_utils import greedy_search, exhaustive_search
-
-from src.data_loading.dataset_builder import make_bah_dataset_and_loader
-from src.data_loading.pretrained_extractors import build_extractors_from_config, AffectNetImageProcessor
-
-from transformers import CLIPProcessor, AutoImageProcessor
-
-# If you have a trainer, wire it here. Otherwise you can comment this out temporarily.
+from src.utils.search_utils import greedy_search, exhaustive_search, write_single_run_overrides
+from src.utils.telegram_utils import notify_telegram
+from src.data_loading.multimodal_dataset import make_multimodal_dataset_and_loader
+from src.data_loading.multimodal_runtime import any_split_exists, log_multimodal_batch_stats
+from src.exporters import run_audio_export, run_face_export, run_scene_export, run_text_export
 from src.train import train
 
-# ???????????????????? optionally load .env ??????????????????????????
 try:
     from dotenv import load_dotenv
     load_dotenv()
 except Exception:
     pass
 
-# ???????????????????? Telegram helper ???????????????????????????????
 
-def _notify_telegram(text: str, enabled: bool = True) -> bool:
-    """Send a message to TG if enabled and TELEGRAM_BOT_TOKEN/CHAT_ID are set."""
-    if not enabled:
-        logging.info("TG notify: disabled by config")
-        return False
-    token = os.getenv("TELEGRAM_BOT_TOKEN")
-    chat_id = os.getenv("TELEGRAM_CHAT_ID")
-    if not token or not chat_id:
-        logging.info("TG notify: skipped (no TELEGRAM_BOT_TOKEN/CHAT_ID)")
-        return False
-    try:
-        r = requests.post(
-            f"https://api.telegram.org/bot{token}/sendMessage",
-            json={"chat_id": chat_id, "text": text, "parse_mode": "HTML"},
-            timeout=8,
+def _resolve_face_artifact_path(base_config, split: str) -> Path:
+    face_source = getattr(base_config, "multimodal_sources", {}).get("face")
+    if face_source is None:
+        return (
+            Path(base_config.multimodal_artifacts_dir)
+            / "face"
+            / base_config.face_artifact_tag
+            / f"{split}.pkl"
         )
-        try:
-            payload = r.json()
-        except Exception:
-            payload = {"raw": r.text}
-        if r.ok and isinstance(payload, dict) and payload.get("ok"):
-            logging.info("TG notify: sent")
-            return True
-        logging.warning(f"TG notify: API error {r.status_code} -> {payload}")
-        return False
-    except Exception as e:
-        logging.warning(f"TG notify failed: {e}")
-        return False
+
+    if isinstance(face_source, str):
+        return Path(str(face_source).format(split=split))
+    if isinstance(face_source, dict):
+        raw_path = face_source.get(split, face_source.get("path"))
+        if not raw_path:
+            raise KeyError(f"Face artifact path is not configured for split='{split}'")
+        return Path(str(raw_path).format(split=split))
+    raise TypeError(f"Unsupported face source config type: {type(face_source)}")
 
 
-def _any_split_exists(cfg, split_name: str) -> bool:
-    """
-    Check if any CSV exists for a split among datasets.bah_* sections.
-    """
-    for ds_name, ds_cfg in getattr(cfg, "datasets", {}).items():
-        if not ds_name.lower().startswith("bah_"):
-            continue
-        csv_path = ds_cfg["csv_path"].format(base_dir=ds_cfg["base_dir"], split=split_name)
-        if os.path.exists(csv_path):
-            return True
-    return False
+def _resolve_audio_artifact_path(base_config, split: str) -> Path:
+    audio_source = getattr(base_config, "multimodal_sources", {}).get("audio")
+    if audio_source is None:
+        return (
+            Path(base_config.multimodal_artifacts_dir)
+            / "audio"
+            / base_config.audio_artifact_tag
+            / f"{split}.pkl"
+        )
+
+    if isinstance(audio_source, str):
+        return Path(str(audio_source).format(split=split))
+    if isinstance(audio_source, dict):
+        raw_path = audio_source.get(split, audio_source.get("path"))
+        if not raw_path:
+            raise KeyError(f"Audio artifact path is not configured for split='{split}'")
+        return Path(str(raw_path).format(split=split))
+    raise TypeError(f"Unsupported audio source config type: {type(audio_source)}")
+
+
+def _resolve_scene_artifact_path(base_config, split: str) -> Path:
+    scene_source = getattr(base_config, "multimodal_sources", {}).get("scene")
+    if scene_source is None:
+        return (
+            Path(base_config.multimodal_artifacts_dir)
+            / "scene"
+            / base_config.scene_artifact_tag
+            / f"{split}.pkl"
+        )
+
+    if isinstance(scene_source, str):
+        return Path(str(scene_source).format(split=split))
+    if isinstance(scene_source, dict):
+        raw_path = scene_source.get(split, scene_source.get("path"))
+        if not raw_path:
+            raise KeyError(f"Scene artifact path is not configured for split='{split}'")
+        return Path(str(raw_path).format(split=split))
+    raise TypeError(f"Unsupported scene source config type: {type(scene_source)}")
+
+
+def _resolve_text_artifact_path(base_config, split: str) -> Path:
+    text_source = getattr(base_config, "multimodal_sources", {}).get("text")
+    if text_source is None:
+        return (
+            Path(base_config.multimodal_artifacts_dir)
+            / "text"
+            / base_config.text_artifact_tag
+            / f"{split}.pkl"
+        )
+
+    if isinstance(text_source, str):
+        return Path(str(text_source).format(split=split))
+    if isinstance(text_source, dict):
+        raw_path = text_source.get(split, text_source.get("path"))
+        if not raw_path:
+            raise KeyError(f"Text artifact path is not configured for split='{split}'")
+        return Path(str(raw_path).format(split=split))
+    raise TypeError(f"Unsupported text source config type: {type(text_source)}")
+
+
+def _required_pipeline_splits(base_config) -> list[str]:
+    configured_splits = list(getattr(base_config, "export_splits", []))
+    if not configured_splits:
+        configured_splits = list(getattr(base_config, "face_export_splits", []))
+    splits = ["train"]
+
+    if "dev" in configured_splits and any_split_exists(base_config, "dev"):
+        eval_split = "dev"
+    elif "val" in configured_splits and any_split_exists(base_config, "val"):
+        eval_split = "val"
+    else:
+        eval_split = "dev" if any_split_exists(base_config, "dev") else "val"
+
+    splits.append(eval_split)
+    splits.append("test" if any_split_exists(base_config, "test") else splits[-1])
+    return list(dict.fromkeys(splits))
+
+
+def _splits_to_process(required_splits: list[str], resolve_path_fn, force_reexport: bool) -> list[str]:
+    if force_reexport:
+        return list(required_splits)
+    return [split for split in required_splits if not resolve_path_fn(split).exists()]
+
+
+def _ensure_face_artifacts(base_config) -> None:
+    placeholder_modalities = set(getattr(base_config, "multimodal_placeholder_modalities", []))
+    if "face" not in getattr(base_config, "multimodal_modalities", []) or "face" in placeholder_modalities:
+        return
+
+    required_splits = _required_pipeline_splits(base_config)
+    force_reexport = bool(getattr(base_config, "face_export_overwrite_cache", False))
+    splits_to_process = _splits_to_process(
+        required_splits,
+        lambda split: _resolve_face_artifact_path(base_config, split),
+        force_reexport,
+    )
+    if not splits_to_process:
+        return
+
+    if force_reexport:
+        logging.info("Force face re-export enabled. Processing splits=%s", splits_to_process)
+    else:
+        logging.info("Missing face artifacts for splits=%s. Running face exporter automatically.", splits_to_process)
+    run_face_export(
+        config_path="config.toml",
+        configure_logging=False,
+        splits=splits_to_process,
+    )
+
+    still_missing = [
+        split for split in required_splits
+        if not _resolve_face_artifact_path(base_config, split).exists()
+    ]
+    if still_missing:
+        raise FileNotFoundError(
+            f"Face exporter finished, but artifacts are still missing for splits={still_missing}"
+        )
+
+
+def _ensure_audio_artifacts(base_config) -> None:
+    placeholder_modalities = set(getattr(base_config, "multimodal_placeholder_modalities", []))
+    if "audio" not in getattr(base_config, "multimodal_modalities", []) or "audio" in placeholder_modalities:
+        return
+
+    required_splits = _required_pipeline_splits(base_config)
+    force_reexport = bool(getattr(base_config, "audio_export_overwrite_cache", False))
+    audio_source = str(getattr(base_config, "audio_export_source", "export")).lower()
+
+    if audio_source == "precomputed":
+        missing_splits = [
+            split for split in required_splits if not _resolve_audio_artifact_path(base_config, split).exists()
+        ]
+        if force_reexport:
+            logging.info("audio_export.overwrite_cache=true ignored for source='precomputed'")
+        if not missing_splits:
+            return
+        raise FileNotFoundError(
+            "Missing precomputed audio artifacts for splits="
+            f"{missing_splits}. Expected path template: "
+            f"{getattr(base_config, 'audio_precomputed_path', '<unset>')}"
+        )
+
+    splits_to_process = _splits_to_process(
+        required_splits,
+        lambda split: _resolve_audio_artifact_path(base_config, split),
+        force_reexport,
+    )
+    if not splits_to_process:
+        return
+
+    if force_reexport:
+        logging.info("Force audio re-export enabled. Processing splits=%s", splits_to_process)
+    else:
+        logging.info("Missing audio artifacts for splits=%s. Running audio exporter automatically.", splits_to_process)
+    run_audio_export(
+        config_path="config.toml",
+        configure_logging=False,
+        splits=splits_to_process,
+    )
+
+    still_missing = [
+        split for split in required_splits
+        if not _resolve_audio_artifact_path(base_config, split).exists()
+    ]
+    if still_missing:
+        raise FileNotFoundError(
+            f"Audio exporter finished, but artifacts are still missing for splits={still_missing}"
+        )
+
+
+def _ensure_scene_artifacts(base_config) -> None:
+    placeholder_modalities = set(getattr(base_config, "multimodal_placeholder_modalities", []))
+    if "scene" not in getattr(base_config, "multimodal_modalities", []) or "scene" in placeholder_modalities:
+        return
+
+    required_splits = _required_pipeline_splits(base_config)
+    force_reexport = bool(getattr(base_config, "scene_export_overwrite_cache", False))
+    splits_to_process = _splits_to_process(
+        required_splits,
+        lambda split: _resolve_scene_artifact_path(base_config, split),
+        force_reexport,
+    )
+    if not splits_to_process:
+        return
+
+    if force_reexport:
+        logging.info("Force scene re-export enabled. Processing splits=%s", splits_to_process)
+    else:
+        logging.info("Missing scene artifacts for splits=%s. Running scene exporter automatically.", splits_to_process)
+    run_scene_export(
+        config_path="config.toml",
+        configure_logging=False,
+        splits=splits_to_process,
+    )
+
+    still_missing = [
+        split for split in required_splits
+        if not _resolve_scene_artifact_path(base_config, split).exists()
+    ]
+    if still_missing:
+        raise FileNotFoundError(
+            f"Scene exporter finished, but artifacts are still missing for splits={still_missing}"
+        )
+
+
+def _ensure_text_artifacts(base_config) -> None:
+    placeholder_modalities = set(getattr(base_config, "multimodal_placeholder_modalities", []))
+    if "text" not in getattr(base_config, "multimodal_modalities", []) or "text" in placeholder_modalities:
+        return
+
+    required_splits = _required_pipeline_splits(base_config)
+    force_reexport = bool(getattr(base_config, "text_export_overwrite_cache", False))
+    splits_to_process = _splits_to_process(
+        required_splits,
+        lambda split: _resolve_text_artifact_path(base_config, split),
+        force_reexport,
+    )
+    if not splits_to_process:
+        return
+
+    if force_reexport:
+        logging.info("Force text re-export enabled. Processing splits=%s", splits_to_process)
+    else:
+        logging.info("Missing text artifacts for splits=%s. Running text exporter automatically.", splits_to_process)
+    run_text_export(
+        config_path="config.toml",
+        configure_logging=False,
+        splits=splits_to_process,
+    )
+
+    still_missing = [
+        split for split in required_splits
+        if not _resolve_text_artifact_path(base_config, split).exists()
+    ]
+    if still_missing:
+        raise FileNotFoundError(
+            f"Text exporter finished, but artifacts are still missing for splits={still_missing}"
+        )
+
+
+def _run_multimodal_pipeline(base_config, results_dir: str, use_tg: bool) -> None:
+    required_splits = _required_pipeline_splits(base_config)
+    dev_split = next(split for split in required_splits if split in ("dev", "val"))
+    _ensure_face_artifacts(base_config)
+    _ensure_audio_artifacts(base_config)
+    _ensure_text_artifacts(base_config)
+    _ensure_scene_artifacts(base_config)
+
+    logging.info("Loading multimodal artifacts (train/dev/test)...")
+    _, train_loader = make_multimodal_dataset_and_loader(base_config, "train")
+    _, dev_loader = make_multimodal_dataset_and_loader(base_config, dev_split)
+
+    if any_split_exists(base_config, "test"):
+        _, test_loader = make_multimodal_dataset_and_loader(base_config, "test")
+    else:
+        test_loader = dev_loader
+
+    log_multimodal_batch_stats(train_loader)
+    log_multimodal_batch_stats(dev_loader)
+    if test_loader is not dev_loader:
+        log_multimodal_batch_stats(test_loader)
+
+    if base_config.prepare_only:
+        logging.info("== prepare_only mode: multimodal artifacts validated, no training ==")
+        notify_telegram(
+            f"? <b>multimodal_artifacts</b>: prepare_only completed\n?? {results_dir}",
+            enabled=use_tg,
+        )
+        return
+
+    search_type = str(getattr(base_config, "search_type", "none")).lower()
+    overrides_file = os.path.join(results_dir, "overrides.txt")
+    if search_type == "none":
+        logging.info("== Single training run (no hyperparameter search) ==")
+        summary = train(
+            base_config,
+            train_loader=train_loader,
+            dev_loader=dev_loader,
+            test_loader=test_loader,
+            results_dir=results_dir,
+        )
+        write_single_run_overrides(
+            cfg=base_config,
+            summary=summary,
+            overrides_file=overrides_file,
+        )
+        best_score = summary.get("best_score", float("nan"))
+        best_ckpt = summary.get("best_checkpoint", "")
+        logging.info("Fusion training finished: best_score=%.4f checkpoint=%s", float(best_score), best_ckpt)
+        notify_telegram(
+            f"? <b>fusion_train</b>: done\nMF1_AVG={float(best_score):.4f}\n?? {best_ckpt}",
+            enabled=use_tg,
+        )
+        return
+
+    search_params_path = str(getattr(base_config, "search_params_path", "search_params.toml"))
+    if not os.path.exists(search_params_path):
+        raise FileNotFoundError(f"Search params file not found: {search_params_path}")
+    search_cfg = toml.load(search_params_path)
+    param_grid = dict(search_cfg.get("grid", {}))
+    default_values = dict(search_cfg.get("defaults", {}))
+    if not param_grid:
+        raise ValueError(f"No [grid] params found in {search_params_path}")
+
+    runs_root = os.path.join(results_dir, "search_runs")
+    os.makedirs(runs_root, exist_ok=True)
+    logging.info(
+        "Starting %s search: selection_metric=%s split=%s params=%s",
+        search_type,
+        getattr(base_config, "search_selection_metric", "MF1"),
+        getattr(base_config, "search_early_stop_on", "avg"),
+        list(param_grid.keys()),
+    )
+
+    if search_type == "greedy":
+        search_result = greedy_search(
+            base_config=base_config,
+            train_loader=train_loader,
+            dev_loader=dev_loader,
+            test_loader=test_loader,
+            train_fn=train,
+            overrides_file=overrides_file,
+            param_grid=param_grid,
+            default_values=default_values,
+            runs_root=runs_root,
+        )
+    elif search_type == "exhaustive":
+        search_result = exhaustive_search(
+            base_config=base_config,
+            train_loader=train_loader,
+            dev_loader=dev_loader,
+            test_loader=test_loader,
+            train_fn=train,
+            overrides_file=overrides_file,
+            param_grid=param_grid,
+            runs_root=runs_root,
+        )
+    else:
+        raise ValueError(f"Unknown search.type='{search_type}'")
+
+    best_score = float(search_result.get("best_score", float("nan")))
+    best_params = search_result.get("best_params", {})
+    logging.info("Search finished: best_score=%.4f best_params=%s", best_score, best_params)
+    notify_telegram(
+        f"? <b>{search_type}_search</b>: done\nbest_score={best_score:.4f}\n?? {results_dir}",
+        enabled=use_tg,
+    )
 
 
 def main():
     # ???????????????????? 1. Config and directories ????????????????????
     base_config = ConfigLoader("config.toml")
 
-    model_name = base_config.model_name.replace("/", "_").replace(" ", "_").lower()
+    run_name = "multimodal_pipeline"
     timestamp = datetime.datetime.now().strftime("%Y-%m-%d_%H-%M-%S")
-    results_dir = f"results/results_{model_name}_{timestamp}"
+    results_dir = f"results/results_{run_name}_{timestamp}"
     os.makedirs(results_dir, exist_ok=True)
-
-    base_config.checkpoint_dir = os.path.join(results_dir, "checkpoints")
-    os.makedirs(base_config.checkpoint_dir, exist_ok=True)
-
-    epochlog_dir = os.path.join(results_dir, "metrics_by_epoch")
-    os.makedirs(epochlog_dir, exist_ok=True)
 
     # ???????????????????? 2. Logging ?????????????????????????????????
     log_file = os.path.join(results_dir, "session_log.txt")
@@ -98,144 +412,19 @@ def main():
     )
 
     # startup ping
-    _notify_telegram(f"?? Start: <b>{model_name}</b>\n?? {results_dir}", enabled=use_tg)
+    notify_telegram(f"?? Start: <b>{run_name}</b>\n?? {results_dir}", enabled=use_tg)
 
-    # Save config copy and overrides log
+    # Save config copy
     shutil.copy("config.toml", os.path.join(results_dir, "config_copy.toml"))
-    overrides_file = os.path.join(results_dir, "overrides.txt")
-    csv_prefix = os.path.join(epochlog_dir, "metrics_epochlog")
 
-    # ???????????????????? 3. Extractors/processors ???????????????????
-    logging.info("?? Initializing extractors from config (face only)...")
-
-    # build_extractors_from_config should return key 'face'
-    modality_extractors = build_extractors_from_config(base_config)
-
-    # Video processor: AutoImageProcessor for ViT, CLIPProcessor for CLIP
-    if getattr(base_config, "video_extractor", "").lower() == "off":
-        raise ValueError("video_extractor='off' is not supported ? processor for 'face' is required.")
-
-    model_name = base_config.video_extractor
-    try:
-        vname = model_name.lower()
-        if vname in {
-            "affectnet_efficientnet_b0",
-            "affectnet_efficientnet",
-            "affectnet_enet_b0",
-            "affectnet_effnet",
-        }:
-            face_processor = AffectNetImageProcessor(image_size=base_config.affectnet_image_size)
-        elif "vit" in vname:
-            face_processor = AutoImageProcessor.from_pretrained(model_name)
-        else:
-            face_processor = CLIPProcessor.from_pretrained(model_name)
-    except Exception as e:
-        raise RuntimeError(
-            f"Failed to initialize image processor from '{model_name}'. "
-            f"Check config.video_extractor. Original error: {e}"
-        )
-
-    modality_processors = {"face": face_processor}
-
-    # store in config for dataset builder
-    base_config.modality_extractors = modality_extractors
-    base_config.modality_processors = modality_processors
-
-    enabled = ", ".join(sorted(modality_extractors.keys())) or "?"
-    logging.info(f"? Active modalities: {enabled}")
-
-    # ???????????????????? 4. Data loaders (BAH) ??????????????????????
-    # dev/val: if any dev CSV exists, use 'dev', otherwise 'val'
-    dev_split = "dev" if _any_split_exists(base_config, "dev") else "val"
-
-    logging.info("?? Loading BAH (train/dev/test)...")
-    _, train_loader = make_bah_dataset_and_loader(base_config, "train")
-    _, dev_loader = make_bah_dataset_and_loader(base_config, dev_split)
-
-    # test: if no test split, reuse dev
-    if _any_split_exists(base_config, "test"):
-        _, test_loader = make_bah_dataset_and_loader(base_config, "test")
-    else:
-        test_loader = dev_loader
-
-    # ???????????????????? 5. prepare_only mode ???????????????????????
-    if base_config.prepare_only:
-        logging.info("== prepare_only mode: only data preparation, no training ==")
-        _notify_telegram(
-            f"? <b>{model_name}</b>: prepare_only completed\n?? {results_dir}",
-            enabled=use_tg
-        )
-        return
-
-    # ???????????????????? 6. Search/training ?????????????????????????
-    search_type = base_config.search_type
-
-    dev_loaders = {"bah": dev_loader}
-    test_loaders = {"bah": test_loader}
-
-    if search_type == "greedy":
-        search_config = toml.load("search_params.toml")
-        param_grid = dict(search_config.get("grid", {}))
-        default_values = dict(search_config.get("defaults", {}))
-
-        greedy_search(
-            base_config=base_config,
-            train_loader=train_loader,
-            dev_loader=dev_loaders,
-            test_loader=test_loaders,
-            train_fn=train,
-            overrides_file=overrides_file,
-            param_grid=param_grid,
-            default_values=default_values,
-        )
-        _notify_telegram(
-            f"? <b>{model_name}</b>: greedy search finished\n?? {results_dir}",
-            enabled=use_tg
-        )
-
-    elif search_type == "exhaustive":
-        search_config = toml.load("search_params.toml")
-        param_grid = dict(search_config.get("grid", {}))
-
-        exhaustive_search(
-            base_config=base_config,
-            train_loader=train_loader,
-            dev_loader=dev_loaders,
-            test_loader=test_loaders,
-            train_fn=train,
-            overrides_file=overrides_file,
-            param_grid=param_grid,
-        )
-        _notify_telegram(
-            f"? <b>{model_name}</b>: exhaustive search finished\n?? {results_dir}",
-            enabled=use_tg
-        )
-
-    elif search_type == "none":
-        logging.info("== Single training run (no hyperparameter search) ==")
-        train(
-            cfg=base_config,
-            mm_loader=train_loader,
-            dev_loaders=dev_loaders,
-            test_loaders=test_loaders,
-        )
-        _notify_telegram(
-            f"? <b>{model_name}</b>: training (no search) completed\n?? {results_dir}",
-            enabled=use_tg
-        )
-
-    else:
-        raise ValueError(
-            f"?? Invalid search_type: '{base_config.search_type}'. "
-            f"Use 'greedy', 'exhaustive' or 'none'."
-        )
+    _run_multimodal_pipeline(base_config, results_dir, use_tg)
 
 
 if __name__ == "__main__":
     try:
         main()
     except Exception as e:
-        _notify_telegram(
+        notify_telegram(
             f"? Crash: <code>{type(e).__name__}</code>\n{e}",
             enabled=True
         )

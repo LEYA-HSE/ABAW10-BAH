@@ -1,3 +1,6 @@
+# coding: utf-8
+from __future__ import annotations
+
 import torch
 import torch.nn as nn
 import torch.nn.functional as F
@@ -20,8 +23,7 @@ class LogCosh(nn.Module):
         super().__init__()
 
     def forward(self, p: torch.Tensor, y: torch.Tensor) -> torch.Tensor:
-        loss = torch.log(torch.cosh(p - y))
-        return torch.mean(loss)
+        return torch.mean(torch.log(torch.cosh(p - y)))
 
 
 class RMSE(nn.Module):
@@ -41,7 +43,7 @@ class GL(nn.Module):
         self.sigma = sigma
 
     def forward(self, p: torch.Tensor, y: torch.Tensor) -> torch.Tensor:
-        gl = self.eps / (self.lam ** 2) * (1 - torch.exp(-1 * ((y - p) ** 2) / (self.sigma ** 2)))
+        gl = self.eps / (self.lam**2) * (1 - torch.exp(-1 * ((y - p) ** 2) / (self.sigma**2)))
         return gl.mean()
 
 
@@ -139,8 +141,6 @@ class LogCoshGL(nn.Module):
 
 
 class MAELoss(nn.Module):
-    """Mean Absolute Error loss"""
-
     def __init__(self):
         super().__init__()
 
@@ -149,8 +149,6 @@ class MAELoss(nn.Module):
 
 
 class MSELoss(nn.Module):
-    """Mean Squared Error loss"""
-
     def __init__(self):
         super().__init__()
 
@@ -159,8 +157,6 @@ class MSELoss(nn.Module):
 
 
 class CCCLoss(nn.Module):
-    """Lin's Concordance Correlation Coefficient."""
-
     def __init__(self, eps: float = 1e-8) -> None:
         super().__init__()
         self.eps = eps
@@ -179,3 +175,41 @@ class CCCLoss(nn.Module):
         return 1 - ccc
 
 
+class FocalLoss(nn.Module):
+    def __init__(self, weight: torch.Tensor | None = None, gamma: float = 2.0, reduction: str = "mean"):
+        super().__init__()
+        self.weight = weight
+        self.gamma = float(gamma)
+        self.reduction = reduction
+
+    def forward(self, logits: torch.Tensor, target: torch.Tensor) -> torch.Tensor:
+        ce = F.cross_entropy(logits, target, weight=self.weight, reduction="none")
+        pt = torch.exp(-ce)
+        loss = ((1 - pt) ** self.gamma) * ce
+        if self.reduction == "sum":
+            return loss.sum()
+        if self.reduction == "none":
+            return loss
+        return loss.mean()
+
+
+def build_classification_loss(
+    name: str,
+    *,
+    class_weights: torch.Tensor | None = None,
+    label_smoothing: float = 0.0,
+    focal_gamma: float = 2.0,
+) -> nn.Module:
+    """
+    Factory for single-label classification loss used in multimodal fusion.
+
+    Supported:
+      - "cross_entropy" / "ce"
+      - "focal"
+    """
+    n = str(name).strip().lower()
+    if n in {"cross_entropy", "ce"}:
+        return nn.CrossEntropyLoss(weight=class_weights, label_smoothing=float(label_smoothing))
+    if n == "focal":
+        return FocalLoss(weight=class_weights, gamma=float(focal_gamma))
+    raise ValueError(f"Unknown classification loss '{name}'. Use: cross_entropy|ce|focal")

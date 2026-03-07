@@ -1,21 +1,24 @@
 [grid]
-# hidden_dim = [128, 256, 512]
-hidden_dim = [128]
-# num_archetypes = [3, 4, 5, 6, 7, 8, 9]
-# prototype_alpha = [0.05, 0.1, 0.15, 0.2]
-# num_prototypes_per_class = [1, 3, 5, 7, 9, 11]
-# prototype_alpha = [0.02, 0.05,0.1, 0.15]
-# proto_temperature = [0.05, 0.1, 0.2, 0.5, 1.0]
-# num_transformer_heads = [2]
-# tr_layers = [5]
-# dropout = [0.1, 0.15, 0.2, 0.25, 0.3]
-# out_features = [512]
-# mamba_d_state         = [16,24]        # mamba inner state size
-# mamba_ker_size        = [7,8,9,10]        # kernel size
-# mamba_layers = [6,7,8]
+# Large overnight sweep (~972 combos).
+# Human-friendly keys (mapped to runtime fusion_* attrs internally).
+d_model = [128, 192, 256]
+drop = [0.15, 0.25, 0.35]
+lr = [0.00005, 0.0001, 0.0002]
+weight_decay = [0.0001, 0.0005, 0.001]
+optimizer = ["adamw", "adam", "rmsprop"]
+scheduler_type = ["plateau", "cosine"]
+label_smoothing = [0.0, 0.05]
 
 [defaults]
-hidden_dim = 512
-# mamba_d_state = 6
-# mamba_layer_number = 4
-# pers_loss_type = 'rmse_gl'
+# Fixed settings applied for every run in search.
+input_type = "emb"
+fusion_type = "exchange_transformer"
+x_layers = 2
+x_heads = 4
+x_ff_mult = 4
+x_use_cls = true
+num_epochs = 30
+max_patience = 6
+grad_clip = 1.0
+class_weighting = "balanced"
+loss_name = "cross_entropy"

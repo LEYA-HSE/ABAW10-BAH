@@ -1,14 +1,20 @@
-import torch
+# coding: utf-8
+from __future__ import annotations
+
 import logging
+
+import torch
 from transformers import get_scheduler
+
 
 class DummyScheduler:
     def step(self, *args, **kwargs):
         pass
 
+
 class SmartScheduler:
     def __init__(self, scheduler_type, optimizer, config, steps_per_epoch):
-        self.scheduler_type = scheduler_type.lower()
+        self.scheduler_type = str(scheduler_type).lower()
         self.is_batch_level = False
 
         if self.scheduler_type == "plateau":
@@ -17,7 +23,7 @@ class SmartScheduler:
                 mode="max",
                 factor=0.5,
                 patience=2,
-                min_lr=1e-7
+                min_lr=1e-7,
             )
             logging.info("[Scheduler] Using ReduceLROnPlateau (metric-based).")
 
@@ -25,7 +31,7 @@ class SmartScheduler:
             self.scheduler = torch.optim.lr_scheduler.CosineAnnealingLR(
                 optimizer,
                 T_max=config.num_epochs,
-                eta_min=1e-6
+                eta_min=1e-6,
             )
             logging.info("[Scheduler] Using CosineAnnealingLR.")
 
@@ -36,26 +42,27 @@ class SmartScheduler:
                 optimizer,
                 max_lr=config.lr,
                 steps_per_epoch=steps_per_epoch,
-                epochs=config.num_epochs
+                epochs=config.num_epochs,
             )
             self.is_batch_level = True
-            logging.info(f"[Scheduler] Using OneCycleLR ({steps_per_epoch} steps per epoch).")
+            logging.info("[Scheduler] Using OneCycleLR (%s steps per epoch).", steps_per_epoch)
 
         elif self.scheduler_type.startswith("huggingface_"):
             scheduler_name = self.scheduler_type.replace("huggingface_", "")
-
             total_steps = steps_per_epoch * config.num_epochs
             warmup_steps = int(total_steps * config.warmup_ratio)
-
             self.scheduler = get_scheduler(
                 name=scheduler_name,
                 optimizer=optimizer,
                 num_warmup_steps=warmup_steps,
                 num_training_steps=total_steps,
             )
-            self.is_batch_level = True  # HF schedulers typically step per batch
+            self.is_batch_level = True
             logging.info(
-                f"[Scheduler] HuggingFace: {scheduler_name} ? warmup_steps={warmup_steps}, total_steps={total_steps}"
+                "[Scheduler] HuggingFace: %s | warmup_steps=%s, total_steps=%s",
+                scheduler_name,
+                warmup_steps,
+                total_steps,
             )
 
         elif self.scheduler_type == "none":
@@ -66,10 +73,6 @@ class SmartScheduler:
             raise ValueError(f"Unknown scheduler_type: {scheduler_type}")
 
     def step(self, metric=None, batch_level=False):
-        """
-        batch_level=True  ? step after batch (e.g., OneCycle, HuggingFace schedulers)
-        batch_level=False ? step after epoch
-        """
         if isinstance(self.scheduler, DummyScheduler):
             return
 
