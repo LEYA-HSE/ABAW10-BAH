@@ -17,7 +17,7 @@ prepare_only = false
 device = "cuda"
 
 [search]
-type = "none" # none | greedy | exhaustive
+type = "exhaustive" # none | greedy | exhaustive
 selection_metric = "MF1" # metric key taken from selected split block
 early_stop_on = "avg" # avg | dev | test
 params_path = "search_params.toml"
@@ -27,7 +27,7 @@ splits = ["train", "dev", "test"]
 
 [model]
 input_type = "emb" # logits | prob | emb | emb+prob
-type = "exchange_transformer" # class_weighted | attn | concat_mlp | exchange_transformer
+type = "videoformer" # class_weighted | attn | concat_mlp | exchange_transformer | videoformer
 d_model = 256
 drop = 0.25
 use_prototypes = false
@@ -37,6 +37,8 @@ x_layers = 2
 x_heads = 4
 x_ff_mult = 4
 x_use_cls = true
+videoformer_positional_encoding = false
+videoformer_gate_mode = "bd" # none | t | d | bt | bd
 
 [training]
 random_seed = 42

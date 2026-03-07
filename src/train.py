@@ -284,6 +284,8 @@ def train(cfg, train_loader, dev_loader, test_loader, *, results_dir: str) -> Di
         "x_heads": int(getattr(cfg, "fusion_x_heads", 4)),
         "x_ff_mult": int(getattr(cfg, "fusion_x_ff_mult", 4)),
         "x_use_cls": bool(getattr(cfg, "fusion_x_use_cls", True)),
+        "videoformer_positional_encoding": bool(getattr(cfg, "fusion_videoformer_positional_encoding", False)),
+        "videoformer_gate_mode": str(getattr(cfg, "fusion_videoformer_gate_mode", "none")),
     }
     model = MultiModalModel(model_cfg, emb_dims=emb_dims).to(device)
 

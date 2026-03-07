@@ -139,6 +139,8 @@ class ConfigLoader:
         self.fusion_x_heads = int(model_cfg.get("x_heads", 4))
         self.fusion_x_ff_mult = int(model_cfg.get("x_ff_mult", 4))
         self.fusion_x_use_cls = bool(model_cfg.get("x_use_cls", True))
+        self.fusion_videoformer_positional_encoding = bool(model_cfg.get("videoformer_positional_encoding", False))
+        self.fusion_videoformer_gate_mode = str(model_cfg.get("videoformer_gate_mode", "none"))
 
         self.fusion_random_seed = int(training_cfg.get("random_seed", 42))
         self.fusion_num_epochs = int(training_cfg.get("num_epochs", 30))
@@ -344,6 +346,8 @@ class ConfigLoader:
         logging.info("x_heads=%s", self.fusion_x_heads)
         logging.info("x_ff_mult=%s", self.fusion_x_ff_mult)
         logging.info("x_use_cls=%s", self.fusion_x_use_cls)
+        logging.info("videoformer_positional_encoding=%s", self.fusion_videoformer_positional_encoding)
+        logging.info("videoformer_gate_mode=%s", self.fusion_videoformer_gate_mode)
 
         logging.info("--- Fusion Train ---")
         logging.info("random_seed=%s", self.fusion_random_seed)

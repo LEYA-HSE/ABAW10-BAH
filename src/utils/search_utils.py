@@ -34,6 +34,8 @@ PARAM_ALIASES = {
     "x_heads": "fusion_x_heads",
     "x_ff_mult": "fusion_x_ff_mult",
     "x_use_cls": "fusion_x_use_cls",
+    "videoformer_positional_encoding": "fusion_videoformer_positional_encoding",
+    "videoformer_gate_mode": "fusion_videoformer_gate_mode",
     # training section aliases
     "random_seed": "fusion_random_seed",
     "num_epochs": "fusion_num_epochs",
@@ -507,6 +509,8 @@ def _single_run_params_snapshot(cfg) -> dict[str, Any]:
         "x_heads": getattr(cfg, "fusion_x_heads", None),
         "x_ff_mult": getattr(cfg, "fusion_x_ff_mult", None),
         "x_use_cls": getattr(cfg, "fusion_x_use_cls", None),
+        "videoformer_positional_encoding": getattr(cfg, "fusion_videoformer_positional_encoding", None),
+        "videoformer_gate_mode": getattr(cfg, "fusion_videoformer_gate_mode", None),
         "num_epochs": getattr(cfg, "fusion_num_epochs", None),
         "max_patience": getattr(cfg, "fusion_max_patience", None),
         "optimizer": getattr(cfg, "fusion_optimizer", None),

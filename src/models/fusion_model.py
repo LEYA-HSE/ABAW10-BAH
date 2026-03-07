@@ -70,6 +70,83 @@ class AttnFusion(nn.Module):
         return fused, w
 
 
+class _VideoFormerPositionWiseFeedForward(nn.Module):
+    def __init__(self, input_dim: int, hidden_dim: int, dropout: float = 0.1):
+        super().__init__()
+        self.layer_1 = nn.Linear(input_dim, hidden_dim)
+        self.layer_2 = nn.Linear(hidden_dim, input_dim)
+        self.dropout = nn.Dropout(dropout)
+
+    def forward(self, x: torch.Tensor) -> torch.Tensor:
+        x = self.layer_1(x)
+        x = F.gelu(x)
+        x = self.dropout(x)
+        return self.layer_2(x)
+
+
+class _VideoFormerAddAndNorm(nn.Module):
+    def __init__(self, input_dim: int, dropout: float = 0.1):
+        super().__init__()
+        self.norm = nn.LayerNorm(input_dim)
+        self.dropout = nn.Dropout(dropout)
+
+    def forward(self, x: torch.Tensor, residual: torch.Tensor) -> torch.Tensor:
+        return self.norm(x + self.dropout(residual))
+
+
+class _VideoFormerPositionalEncoding(nn.Module):
+    def __init__(self, d_model: int, dropout: float = 0.1, max_len: int = 5000):
+        super().__init__()
+        self.dropout = nn.Dropout(p=dropout)
+
+        position = torch.arange(max_len).unsqueeze(1)
+        div_term = torch.exp(torch.arange(0, d_model, 2) * (-torch.log(torch.tensor(10000.0)) / d_model))
+        pe = torch.zeros(max_len, d_model)
+        pe[:, 0::2] = torch.sin(position * div_term)
+        pe[:, 1::2] = torch.cos(position * div_term)
+        self.register_buffer("pe", pe)
+
+    def forward(self, x: torch.Tensor) -> torch.Tensor:
+        x = x + self.pe[: x.size(1)].detach()
+        return self.dropout(x)
+
+
+class _VideoFormerEncoderLayer(nn.Module):
+    def __init__(self, input_dim: int, num_heads: int, dropout: float = 0.1, positional_encoding: bool = False):
+        super().__init__()
+        self.self_attention = nn.MultiheadAttention(input_dim, num_heads, dropout=dropout, batch_first=True)
+        self.feed_forward = _VideoFormerPositionWiseFeedForward(input_dim, input_dim, dropout=dropout)
+        self.add_norm_after_attention = _VideoFormerAddAndNorm(input_dim, dropout=dropout)
+        self.add_norm_after_ff = _VideoFormerAddAndNorm(input_dim, dropout=dropout)
+        self.positional_encoding = _VideoFormerPositionalEncoding(input_dim, dropout=dropout) if positional_encoding else None
+
+    def forward(
+        self,
+        query: torch.Tensor,
+        key: torch.Tensor,
+        value: torch.Tensor,
+        *,
+        key_padding_mask: Optional[torch.Tensor] = None,
+        attn_mask: Optional[torch.Tensor] = None,
+    ) -> torch.Tensor:
+        if self.positional_encoding is not None:
+            key = self.positional_encoding(key)
+            value = self.positional_encoding(value)
+            query = self.positional_encoding(query)
+
+        attn_output, _ = self.self_attention(
+            query,
+            key,
+            value,
+            key_padding_mask=key_padding_mask,
+            attn_mask=attn_mask,
+            need_weights=False,
+        )
+        x = self.add_norm_after_attention(attn_output, query)
+        ff_output = self.feed_forward(x)
+        return self.add_norm_after_ff(ff_output, x)
+
+
 class ClassWeightedFusion(nn.Module):
     """
     Learn class-specific modality weights.
@@ -121,6 +198,107 @@ class PrototypeHead(nn.Module):
                 s = p[c1] @ p[c2].t()
                 loss = loss + F.relu(margin_inter - s).mean()
         return loss
+
+
+class VideoFormer(nn.Module):
+    """
+    VideoFormer adapted for modality tokens.
+    """
+
+    def __init__(
+        self,
+        token_dim: int,
+        d_model: int = 256,
+        n_layers: int = 2,
+        n_heads: int = 4,
+        drop: float = 0.1,
+        positional_encoding: bool = False,
+        gate_mode: Optional[str] = None,
+        num_modalities: int = 4,
+    ):
+        super().__init__()
+        if isinstance(gate_mode, str) and gate_mode.lower() in {"none", "", "null"}:
+            gate_mode = None
+        self.gate_mode = gate_mode
+        self.num_layers = int(n_layers)
+        self.num_modalities = int(num_modalities)
+        self.d_model = int(d_model)
+
+        self.in_proj = nn.Sequential(
+            nn.Linear(token_dim, d_model),
+            nn.LayerNorm(d_model),
+            nn.Dropout(drop),
+        )
+
+        self.transformer = nn.ModuleList(
+            [
+                _VideoFormerEncoderLayer(
+                    input_dim=d_model,
+                    num_heads=n_heads,
+                    dropout=drop,
+                    positional_encoding=positional_encoding,
+                )
+                for _ in range(self.num_layers)
+            ]
+        )
+
+        if self.gate_mode is not None:
+            self.bt_gates = nn.ParameterList([nn.Parameter(torch.empty(d_model, 1)) for _ in range(self.num_layers)])
+            self.bd_gates = nn.ParameterList([nn.Parameter(torch.empty(d_model, d_model)) for _ in range(self.num_layers)])
+            self.t_gates = nn.ParameterList([nn.Parameter(torch.empty(self.num_modalities, 1)) for _ in range(self.num_layers)])
+            self.d_gates = nn.ParameterList([nn.Parameter(torch.empty(d_model)) for _ in range(self.num_layers)])
+            for plist in (self.bt_gates, self.bd_gates, self.t_gates, self.d_gates):
+                for p in plist:
+                    if p.dim() >= 2:
+                        nn.init.xavier_uniform_(p)
+                    else:
+                        nn.init.zeros_(p)
+
+    def _compute_alpha(self, layer_idx: int, sequences: torch.Tensor) -> torch.Tensor:
+        b, t, d = sequences.shape
+        if self.gate_mode == "bt":
+            w_bt = self.bt_gates[layer_idx]
+            seq_flat = sequences.reshape(b * t, d)
+            alpha_flat = torch.matmul(seq_flat, w_bt)
+            alpha = torch.sigmoid(alpha_flat).view(b, t, 1)
+        elif self.gate_mode == "bd":
+            seq_mean = sequences.mean(dim=1)
+            w_bd = self.bd_gates[layer_idx]
+            alpha_feat = torch.sigmoid(torch.matmul(seq_mean, w_bd))
+            alpha = alpha_feat.unsqueeze(1)
+        elif self.gate_mode == "t":
+            w_t = self.t_gates[layer_idx]
+            alpha_t = torch.softmax(w_t.squeeze(-1), dim=0)
+            alpha = alpha_t.view(1, t, 1)
+        elif self.gate_mode == "d":
+            w_d = self.d_gates[layer_idx]
+            alpha_d = torch.softmax(w_d, dim=0)
+            alpha = alpha_d.view(1, 1, d)
+        else:
+            raise ValueError(f"Unknown gate_mode: {self.gate_mode}")
+        return alpha.expand_as(sequences)
+
+    def forward(self, tokens: torch.Tensor, mask: torch.Tensor) -> torch.Tensor:
+        # tokens: (B, M, Dtok), mask: (B, M) True=exists
+        x = self.in_proj(tokens)
+        for i, layer in enumerate(self.transformer):
+            att = layer(
+                x,
+                x,
+                x,
+                key_padding_mask=(~mask) if mask is not None else None,
+            )
+            if self.gate_mode is None:
+                x = x + att
+            else:
+                alpha = self._compute_alpha(i, x)
+                x = (1.0 - alpha) * x + alpha * att
+
+        if mask is None:
+            return x.mean(dim=1)
+        denom = mask.sum(dim=1).clamp(min=1).unsqueeze(-1).to(x.dtype)
+        x_masked = x.masked_fill(~mask.unsqueeze(-1), 0.0)
+        return x_masked.sum(dim=1) / denom
 
 
 class ExchangeFusionTransformer(nn.Module):
@@ -190,7 +368,7 @@ class MultiModalModel(nn.Module):
     Config:
       modalities: ["face","text","scene","audio"] subset
       input_type: "logits" | "prob" | "emb" | "emb+prob"
-      fusion: "class_weighted" | "attn" | "concat_mlp" | "exchange_transformer"
+      fusion: "class_weighted" | "attn" | "concat_mlp" | "exchange_transformer" | "videoformer"
       d_model: int
       drop: float
       use_prototypes: bool
@@ -201,7 +379,9 @@ class MultiModalModel(nn.Module):
         self.cfg = cfg
         self.modalities: List[str] = cfg["modalities"]
         self.input_type: str = cfg["input_type"]
-        self.fusion: str = cfg["fusion"]
+        raw_fusion = str(cfg["fusion"])
+        fusion_norm = raw_fusion.lower()
+        self.fusion: str = fusion_norm
         self.d_model: int = int(cfg.get("d_model", 256))
         drop = float(cfg.get("drop", 0.1))
 
@@ -244,8 +424,22 @@ class MultiModalModel(nn.Module):
                 max_modalities=len(self.modalities),
             )
             self.classifier = nn.Linear(self.d_model, 2)
+        elif self.fusion == "videoformer":
+            self.videoformer = VideoFormer(
+                token_dim=token_dim,
+                d_model=self.d_model,
+                n_layers=int(cfg.get("x_layers", 2)),
+                n_heads=int(cfg.get("x_heads", 4)),
+                drop=drop,
+                positional_encoding=bool(cfg.get("videoformer_positional_encoding", False)),
+                gate_mode=cfg.get("videoformer_gate_mode", "none"),
+                num_modalities=len(self.modalities),
+            )
+            self.classifier = nn.Linear(self.d_model, 2)
         else:
-            raise ValueError("fusion must be one of: class_weighted, attn, concat_mlp, exchange_transformer")
+            raise ValueError(
+                "fusion must be one of: class_weighted, attn, concat_mlp, exchange_transformer, videoformer"
+            )
 
         self.use_prototypes = bool(cfg.get("use_prototypes", False))
         if self.use_prototypes:
@@ -294,8 +488,11 @@ class MultiModalModel(nn.Module):
             tokens = tokens.masked_fill(~mask.unsqueeze(-1), 0.0)
             fused = self.concat_mlp(tokens.reshape(tokens.size(0), -1))
             out_logits = self.classifier(fused)
-        else:
+        elif self.fusion == "exchange_transformer":
             fused = self.exchange(tokens, mask=mask)
+            out_logits = self.classifier(fused)
+        else:
+            fused = self.videoformer(tokens, mask=mask)
             out_logits = self.classifier(fused)
 
         proto_logits = None

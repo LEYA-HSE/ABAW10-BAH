@@ -1,24 +1,24 @@
 [grid]
-# Large overnight sweep (~972 combos).
-# Human-friendly keys (mapped to runtime fusion_* attrs internally).
+# Stage 1: model-focused sweep for VideoFormer (~540 combos).
+# Focus on architecture first; training params are fixed in [defaults].
 d_model = [128, 192, 256]
-drop = [0.15, 0.25, 0.35]
-lr = [0.00005, 0.0001, 0.0002]
-weight_decay = [0.0001, 0.0005, 0.001]
-optimizer = ["adamw", "adam", "rmsprop"]
-scheduler_type = ["plateau", "cosine"]
-label_smoothing = [0.0, 0.05]
+drop = [0.15, 0.25]
+x_layers = [2, 3, 4]
+x_heads = [2, 4, 8]
+videoformer_gate_mode = ["none", "t", "d", "bt", "bd"]
+optimizer = ["rmsprop", "adamw"]
 
 [defaults]
 # Fixed settings applied for every run in search.
 input_type = "emb"
-fusion_type = "exchange_transformer"
-x_layers = 2
-x_heads = 4
-x_ff_mult = 4
-x_use_cls = true
+fusion_type = "videoformer"
+videoformer_positional_encoding = false
 num_epochs = 30
 max_patience = 6
 grad_clip = 1.0
 class_weighting = "balanced"
 loss_name = "cross_entropy"
+scheduler_type = "plateau"
+lr = 0.0002
+weight_decay = 0.0005
+label_smoothing = 0.05
