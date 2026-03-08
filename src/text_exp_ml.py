@@ -1,6 +1,8 @@
 import pandas as pd
 
 from catboost import CatBoostClassifier
+import lightgbm as lgb
+
 from sklearn.feature_extraction.text import TfidfVectorizer, CountVectorizer
 from sklearn.pipeline import Pipeline
 from sklearn.preprocessing import FunctionTransformer
@@ -395,10 +397,33 @@ save_experiment_predictions(root_folder="data/experiments/exp_1/",
 
 # %%
 
+
+pipeline_15 = Pipeline([
+    ('tfidf', TfidfVectorizer(
+        ngram_range=(1, 3),
+        max_features=1000,
+    )),
+    ('catboost', lgb.LGBMClassifier(**{
+        'max_iter': 100,
+        'objective': 'binary',
+        'boosting_type': 'gbdt',
+        'learning_rate': 0.05,
+        'metric': 'binary_logloss'})),
+])
+
+pipeline_15.fit(train_df['text'], train_df['label'])
+
+save_experiment_predictions(root_folder="data/experiments/exp_1/",
+                            name='15',
+                            pipe=pipeline_15,
+                            datasets=list_datasets,
+                            )
+ 
+
 results, results_mean = calc_scores(root_folder="data/experiments/exp_1/",
                                     plot_names=['13', '7'])
 
-top_names = results_mean.head(5).index.tolist()
+top_names = results_mean.head(10).index.tolist()
 print(results_mean.to_markdown(tablefmt="github"))
 print(results[results['name'].isin(top_names)].to_markdown(tablefmt="github"))
 

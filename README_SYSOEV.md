@@ -1,5 +1,12 @@
 # README LOG
 
+## 2026-03-08 Лучшие модели
+
+2. text_exp_ml - 13 модель TF-IDF + LogReg 
+3. text_exp_ml - 1 модель TF-IDF + CatBoost
+6. 
+
+
 ## 2026-02-21 Эксперименты с классическими моделями построенными на video-to-text данных
 
 - Код экспериментов `./src/text_exp_ml_video.py` 
