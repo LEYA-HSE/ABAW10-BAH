@@ -21,6 +21,7 @@ from typing import Dict, List, Optional
 import torch
 import torch.nn as nn
 import torch.nn.functional as F
+from src.models.help_layers import TransformerEncoderLayer
 
 
 class MLP(nn.Module):
@@ -68,83 +69,6 @@ class AttnFusion(nn.Module):
         w = torch.softmax(scores, dim=-1)  # (B, M)
         fused = torch.sum(tokens * w.unsqueeze(-1), dim=1)  # (B, D)
         return fused, w
-
-
-class _VideoFormerPositionWiseFeedForward(nn.Module):
-    def __init__(self, input_dim: int, hidden_dim: int, dropout: float = 0.1):
-        super().__init__()
-        self.layer_1 = nn.Linear(input_dim, hidden_dim)
-        self.layer_2 = nn.Linear(hidden_dim, input_dim)
-        self.dropout = nn.Dropout(dropout)
-
-    def forward(self, x: torch.Tensor) -> torch.Tensor:
-        x = self.layer_1(x)
-        x = F.gelu(x)
-        x = self.dropout(x)
-        return self.layer_2(x)
-
-
-class _VideoFormerAddAndNorm(nn.Module):
-    def __init__(self, input_dim: int, dropout: float = 0.1):
-        super().__init__()
-        self.norm = nn.LayerNorm(input_dim)
-        self.dropout = nn.Dropout(dropout)
-
-    def forward(self, x: torch.Tensor, residual: torch.Tensor) -> torch.Tensor:
-        return self.norm(x + self.dropout(residual))
-
-
-class _VideoFormerPositionalEncoding(nn.Module):
-    def __init__(self, d_model: int, dropout: float = 0.1, max_len: int = 5000):
-        super().__init__()
-        self.dropout = nn.Dropout(p=dropout)
-
-        position = torch.arange(max_len).unsqueeze(1)
-        div_term = torch.exp(torch.arange(0, d_model, 2) * (-torch.log(torch.tensor(10000.0)) / d_model))
-        pe = torch.zeros(max_len, d_model)
-        pe[:, 0::2] = torch.sin(position * div_term)
-        pe[:, 1::2] = torch.cos(position * div_term)
-        self.register_buffer("pe", pe)
-
-    def forward(self, x: torch.Tensor) -> torch.Tensor:
-        x = x + self.pe[: x.size(1)].detach()
-        return self.dropout(x)
-
-
-class _VideoFormerEncoderLayer(nn.Module):
-    def __init__(self, input_dim: int, num_heads: int, dropout: float = 0.1, positional_encoding: bool = False):
-        super().__init__()
-        self.self_attention = nn.MultiheadAttention(input_dim, num_heads, dropout=dropout, batch_first=True)
-        self.feed_forward = _VideoFormerPositionWiseFeedForward(input_dim, input_dim, dropout=dropout)
-        self.add_norm_after_attention = _VideoFormerAddAndNorm(input_dim, dropout=dropout)
-        self.add_norm_after_ff = _VideoFormerAddAndNorm(input_dim, dropout=dropout)
-        self.positional_encoding = _VideoFormerPositionalEncoding(input_dim, dropout=dropout) if positional_encoding else None
-
-    def forward(
-        self,
-        query: torch.Tensor,
-        key: torch.Tensor,
-        value: torch.Tensor,
-        *,
-        key_padding_mask: Optional[torch.Tensor] = None,
-        attn_mask: Optional[torch.Tensor] = None,
-    ) -> torch.Tensor:
-        if self.positional_encoding is not None:
-            key = self.positional_encoding(key)
-            value = self.positional_encoding(value)
-            query = self.positional_encoding(query)
-
-        attn_output, _ = self.self_attention(
-            query,
-            key,
-            value,
-            key_padding_mask=key_padding_mask,
-            attn_mask=attn_mask,
-            need_weights=False,
-        )
-        x = self.add_norm_after_attention(attn_output, query)
-        ff_output = self.feed_forward(x)
-        return self.add_norm_after_ff(ff_output, x)
 
 
 class ClassWeightedFusion(nn.Module):
@@ -232,7 +156,7 @@ class VideoFormer(nn.Module):
 
         self.transformer = nn.ModuleList(
             [
-                _VideoFormerEncoderLayer(
+                TransformerEncoderLayer(
                     input_dim=d_model,
                     num_heads=n_heads,
                     dropout=drop,
@@ -316,9 +240,12 @@ class ExchangeFusionTransformer(nn.Module):
         drop: float = 0.1,
         use_cls: bool = True,
         max_modalities: int = 4,
+        layer_impl: str = "torch",
+        positional_encoding: bool = False,
     ):
         super().__init__()
         self.use_cls = use_cls
+        self.layer_impl = str(layer_impl).lower()
         self.in_proj = nn.Identity() if token_dim == d_model else nn.Linear(token_dim, d_model)
 
         self.mod_emb = nn.Parameter(torch.zeros(1, max_modalities + (1 if use_cls else 0), d_model))
@@ -328,16 +255,33 @@ class ExchangeFusionTransformer(nn.Module):
             self.cls_token = nn.Parameter(torch.zeros(1, 1, d_model))
             nn.init.normal_(self.cls_token, std=0.02)
 
-        layer = nn.TransformerEncoderLayer(
-            d_model=d_model,
-            nhead=n_heads,
-            dim_feedforward=ff_mult * d_model,
-            dropout=drop,
-            activation="gelu",
-            batch_first=True,
-            norm_first=True,
-        )
-        self.encoder = nn.TransformerEncoder(layer, num_layers=n_layers)
+        if self.layer_impl == "torch":
+            layer = nn.TransformerEncoderLayer(
+                d_model=d_model,
+                nhead=n_heads,
+                dim_feedforward=ff_mult * d_model,
+                dropout=drop,
+                activation="gelu",
+                batch_first=True,
+                norm_first=True,
+            )
+            self.encoder = nn.TransformerEncoder(layer, num_layers=n_layers)
+            self.encoder_layers = None
+        elif self.layer_impl == "custom":
+            self.encoder = None
+            self.encoder_layers = nn.ModuleList(
+                [
+                    TransformerEncoderLayer(
+                        input_dim=d_model,
+                        num_heads=n_heads,
+                        dropout=drop,
+                        positional_encoding=positional_encoding,
+                    )
+                    for _ in range(int(n_layers))
+                ]
+            )
+        else:
+            raise ValueError("x_layer_impl must be one of: torch, custom")
         self.out_norm = nn.LayerNorm(d_model)
 
     def forward(self, tokens: torch.Tensor, mask: torch.Tensor):
@@ -353,7 +297,16 @@ class ExchangeFusionTransformer(nn.Module):
             key_padding_mask = torch.cat([cls_pad, key_padding_mask], dim=1)
 
         x = x + self.mod_emb[:, : x.size(1), :]
-        x = self.encoder(x, src_key_padding_mask=key_padding_mask)
+        if self.layer_impl == "torch":
+            x = self.encoder(x, src_key_padding_mask=key_padding_mask)
+        else:
+            for layer in self.encoder_layers:
+                x = layer(
+                    x,
+                    x,
+                    x,
+                    key_padding_mask=key_padding_mask,
+                )
         x = self.out_norm(x)
 
         if self.use_cls:
@@ -422,6 +375,8 @@ class MultiModalModel(nn.Module):
                 drop=drop,
                 use_cls=bool(cfg.get("x_use_cls", True)),
                 max_modalities=len(self.modalities),
+                layer_impl=str(cfg.get("x_layer_impl", "torch")),
+                positional_encoding=bool(cfg.get("x_positional_encoding", False)),
             )
             self.classifier = nn.Linear(self.d_model, 2)
         elif self.fusion == "videoformer":

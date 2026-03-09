@@ -34,6 +34,8 @@ PARAM_ALIASES = {
     "x_heads": "fusion_x_heads",
     "x_ff_mult": "fusion_x_ff_mult",
     "x_use_cls": "fusion_x_use_cls",
+    "x_layer_impl": "fusion_x_layer_impl",
+    "x_positional_encoding": "fusion_x_positional_encoding",
     "videoformer_positional_encoding": "fusion_videoformer_positional_encoding",
     "videoformer_gate_mode": "fusion_videoformer_gate_mode",
     # training section aliases
@@ -429,6 +431,7 @@ def exhaustive_search(
     train_fn,
     overrides_file: str,
     param_grid: dict[str, list],
+    default_values: dict[str, Any],
     *,
     runs_root: str,
 ) -> dict[str, Any]:
@@ -450,9 +453,12 @@ def exhaustive_search(
     best_score = float("-inf")
     combo_id = 0
 
+    base_params = copy.deepcopy(default_values or {})
+
     for combo in product(*(param_grid[p] for p in all_param_names)):
         combo_id += 1
-        param_combo = dict(zip(all_param_names, combo))
+        param_combo = copy.deepcopy(base_params)
+        param_combo.update(dict(zip(all_param_names, combo)))
         run_dir = os.path.join(runs_root, f"combo_{combo_id:04d}")
         logging.info("[EXHAUSTIVE combo %d] %s", combo_id, param_combo)
 
@@ -509,6 +515,8 @@ def _single_run_params_snapshot(cfg) -> dict[str, Any]:
         "x_heads": getattr(cfg, "fusion_x_heads", None),
         "x_ff_mult": getattr(cfg, "fusion_x_ff_mult", None),
         "x_use_cls": getattr(cfg, "fusion_x_use_cls", None),
+        "x_layer_impl": getattr(cfg, "fusion_x_layer_impl", None),
+        "x_positional_encoding": getattr(cfg, "fusion_x_positional_encoding", None),
         "videoformer_positional_encoding": getattr(cfg, "fusion_videoformer_positional_encoding", None),
         "videoformer_gate_mode": getattr(cfg, "fusion_videoformer_gate_mode", None),
         "num_epochs": getattr(cfg, "fusion_num_epochs", None),

@@ -139,6 +139,10 @@ class ConfigLoader:
         self.fusion_x_heads = int(model_cfg.get("x_heads", 4))
         self.fusion_x_ff_mult = int(model_cfg.get("x_ff_mult", 4))
         self.fusion_x_use_cls = bool(model_cfg.get("x_use_cls", True))
+        self.fusion_x_layer_impl = str(model_cfg.get("x_layer_impl", "torch")).lower()
+        self.fusion_x_positional_encoding = bool(model_cfg.get("x_positional_encoding", False))
+        if self.fusion_x_layer_impl not in {"torch", "custom"}:
+            raise ValueError("model.x_layer_impl must be one of: torch, custom")
         self.fusion_videoformer_positional_encoding = bool(model_cfg.get("videoformer_positional_encoding", False))
         self.fusion_videoformer_gate_mode = str(model_cfg.get("videoformer_gate_mode", "none"))
 
@@ -346,6 +350,8 @@ class ConfigLoader:
         logging.info("x_heads=%s", self.fusion_x_heads)
         logging.info("x_ff_mult=%s", self.fusion_x_ff_mult)
         logging.info("x_use_cls=%s", self.fusion_x_use_cls)
+        logging.info("x_layer_impl=%s", self.fusion_x_layer_impl)
+        logging.info("x_positional_encoding=%s", self.fusion_x_positional_encoding)
         logging.info("videoformer_positional_encoding=%s", self.fusion_videoformer_positional_encoding)
         logging.info("videoformer_gate_mode=%s", self.fusion_videoformer_gate_mode)
 
