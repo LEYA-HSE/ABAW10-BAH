@@ -9,7 +9,7 @@ from pathlib import Path
 import toml
 from src.utils.config_loader import ConfigLoader
 from src.utils.logger_setup import setup_logger
-from src.utils.search_utils import greedy_search, exhaustive_search, write_single_run_overrides
+from src.utils.search_utils import greedy_search, exhaustive_search, optuna_search, write_single_run_overrides
 from src.utils.telegram_utils import notify_telegram
 from src.data_loading.multimodal_dataset import make_multimodal_dataset_and_loader
 from src.data_loading.multimodal_runtime import any_split_exists, log_multimodal_batch_stats
@@ -344,7 +344,8 @@ def _run_multimodal_pipeline(base_config, results_dir: str, use_tg: bool) -> Non
     search_cfg = toml.load(search_params_path)
     param_grid = dict(search_cfg.get("grid", {}))
     default_values = dict(search_cfg.get("defaults", {}))
-    if not param_grid:
+    optuna_options = dict(search_cfg.get("optuna", {}))
+    if search_type in {"greedy", "exhaustive"} and not param_grid:
         raise ValueError(f"No [grid] params found in {search_params_path}")
 
     runs_root = os.path.join(results_dir, "search_runs")
@@ -378,7 +379,21 @@ def _run_multimodal_pipeline(base_config, results_dir: str, use_tg: bool) -> Non
             train_fn=train,
             overrides_file=overrides_file,
             param_grid=param_grid,
+            default_values=default_values,
             runs_root=runs_root,
+        )
+    elif search_type == "optuna":
+        search_result = optuna_search(
+            base_config=base_config,
+            train_loader=train_loader,
+            dev_loader=dev_loader,
+            test_loader=test_loader,
+            train_fn=train,
+            overrides_file=overrides_file,
+            param_grid=param_grid,
+            default_values=default_values,
+            runs_root=runs_root,
+            optuna_cfg=optuna_options,
         )
     else:
         raise ValueError(f"Unknown search.type='{search_type}'")

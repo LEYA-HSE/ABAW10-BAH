@@ -17,7 +17,7 @@ prepare_only = false
 device = "cuda"
 
 [search]
-type = "none" # none | greedy | exhaustive
+type = "optuna" # none | greedy | exhaustive | optuna
 selection_metric = "MF1" # metric key taken from selected split block
 early_stop_on = "avg" # avg | dev | test
 params_path = "search_params.toml"
@@ -28,14 +28,14 @@ splits = ["train", "dev", "test"]
 [model]
 input_type = "emb" # logits | prob | emb | emb+prob
 type = "exchange_transformer" # class_weighted | attn | concat_mlp | exchange_transformer | videoformer
-d_model = 256    # 256
-drop = 0.25      # 0.25
-use_prototypes = false
+d_model = 384    # 256
+drop = 0.4      # 0.25
+use_prototypes = true
 num_prototypes = 8
 proto_tau = 0.2
-x_layers = 2   # 2
+x_layers = 1   # 2
 x_heads = 4    # 4
-x_ff_mult = 4
+x_ff_mult = 2
 x_use_cls = true
 x_layer_impl = "torch" # torch | custom (layer from help_layers)
 x_positional_encoding = false
@@ -47,8 +47,8 @@ random_seed = 42
 num_epochs = 100
 max_patience = 10
 optimizer = "rmsprop" # adam | adamw | sgd | rmsprop
-lr = 0.0002
-weight_decay = 0.0005
+lr = 0.00015614419290436917
+weight_decay = 0.0002066938560458836
 momentum = 0.9
 scheduler_type = "plateau" # none | plateau | cosine | onecycle
 warmup_ratio = 0.1 # used by huggingface_* schedulers
@@ -57,9 +57,10 @@ label_smoothing = 0.05
 focal_gamma = 2.0
 class_weighting = "balanced" # none | balanced | manual
 class_weights = [1.0, 1.0]
-grad_clip = 1.0
-lambda_proto = 0.3
-lambda_proto_div = 0.0
+grad_clip = 1.7
+save_checkpoints = true
+lambda_proto = 0.65
+lambda_proto_div = 0.13
 
 [multimodal]
 modalities = ["face", "audio", "text", "scene"]

@@ -33,7 +33,20 @@ requests==2.32.3
 # === Configs ===
 PyYAML==6.0.2
 toml==0.10.2
+python-dotenv==1.0.1
 
 # === Optional (YOLO etc.) ===
 ultralytics==8.3.177
 ultralytics-thop==2.0.15
+
+# === Search / HPO ===
+optuna==4.7.0
+
+# === Audio ===
+librosa==0.10.2.post1
+
+# === Scene exporter ===
+decord==0.6.0
+
+# === Text exporter (impl=3) ===
+catboost==1.2.8

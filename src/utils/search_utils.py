@@ -3,7 +3,9 @@ from __future__ import annotations
 
 import copy
 import logging
+import math
 import os
+import statistics
 from itertools import product
 from typing import Any
 
@@ -56,6 +58,7 @@ PARAM_ALIASES = {
     "grad_clip": "fusion_grad_clip",
     "lambda_proto": "fusion_lambda_proto",
     "lambda_proto_div": "fusion_lambda_proto_div",
+    "save_checkpoints": "fusion_save_checkpoints",
 }
 
 
@@ -228,6 +231,18 @@ def _choose_split_metrics(
     if split == "test":
         return test_metrics
     return avg_metrics
+
+
+def _avg_numeric_metrics(metrics_list: list[dict[str, Any]]) -> dict[str, Any]:
+    if not metrics_list:
+        return {}
+    keys = sorted(set().union(*(m.keys() for m in metrics_list if isinstance(m, dict))))
+    out: dict[str, Any] = {}
+    for key in keys:
+        vals = [m.get(key) for m in metrics_list if isinstance(m, dict) and _is_num(m.get(key))]
+        if vals:
+            out[key] = float(sum(float(v) for v in vals) / len(vals))
+    return out
 
 
 def _apply_param_overrides(cfg: Any, overrides: dict[str, Any]) -> None:
@@ -505,6 +520,340 @@ def exhaustive_search(
     return {"best_score": best_score, "best_params": best_config or {}}
 
 
+def optuna_search(
+    base_config,
+    train_loader,
+    dev_loader,
+    test_loader,
+    train_fn,
+    overrides_file: str,
+    param_grid: dict[str, list],
+    default_values: dict[str, Any],
+    *,
+    runs_root: str,
+    optuna_cfg: dict[str, Any] | None = None,
+) -> dict[str, Any]:
+    """
+    Optuna-based search over discrete space from [grid].
+    Selection strictly by cfg.search_selection_metric on cfg.search_early_stop_on (avg/dev/test).
+    """
+    try:
+        import optuna  # type: ignore
+    except Exception as exc:
+        raise ImportError(
+            "search.type='optuna' requires dependency 'optuna'. Install it first (e.g. pip install optuna)."
+        ) from exc
+
+    options = dict(optuna_cfg or {})
+    selection_metric = getattr(base_config, "search_selection_metric", "MF1")
+    selection_split = getattr(base_config, "search_early_stop_on", "avg")
+
+    n_trials = int(options.get("n_trials", 100))
+    timeout_sec_raw = options.get("timeout_sec", None)
+    timeout_sec = int(timeout_sec_raw) if timeout_sec_raw not in (None, "", 0, "0") else None
+    n_jobs = int(options.get("n_jobs", 1))
+    seed = int(options.get("seed", getattr(base_config, "fusion_random_seed", 42)))
+    fail_value = float(options.get("fail_value", -1.0))
+    direction = str(options.get("direction", "maximize")).lower()
+    if direction not in {"maximize", "minimize"}:
+        raise ValueError("optuna.direction must be one of: maximize, minimize")
+    optuna_save_checkpoints = bool(options.get("save_checkpoints", False))
+    eval_seeds_raw = options.get("eval_seeds", [])
+    if isinstance(eval_seeds_raw, (list, tuple)):
+        optuna_eval_seeds = [int(s) for s in eval_seeds_raw]
+    elif eval_seeds_raw in ("", None):
+        optuna_eval_seeds = []
+    else:
+        optuna_eval_seeds = [int(eval_seeds_raw)]
+    seed_aggregate = str(options.get("seed_aggregate", "mean")).lower()
+    seed_std_penalty = float(options.get("seed_std_penalty", 0.0))
+    if seed_aggregate not in {"mean", "mean_std_penalty"}:
+        raise ValueError("optuna.seed_aggregate must be one of: mean, mean_std_penalty")
+
+    sampler_name = str(options.get("sampler", "tpe")).lower()
+    n_startup_trials = int(options.get("n_startup_trials", 20))
+    if sampler_name == "random":
+        sampler = optuna.samplers.RandomSampler(seed=seed)
+    elif sampler_name == "tpe":
+        sampler = optuna.samplers.TPESampler(
+            seed=seed,
+            n_startup_trials=n_startup_trials,
+            multivariate=bool(options.get("multivariate", True)),
+            constant_liar=bool(options.get("constant_liar", False)),
+        )
+    else:
+        raise ValueError("optuna.sampler must be one of: tpe, random")
+
+    pruner_name = str(options.get("pruner", "none")).lower()
+    if pruner_name == "none":
+        pruner = optuna.pruners.NopPruner()
+    elif pruner_name == "median":
+        pruner = optuna.pruners.MedianPruner(n_startup_trials=int(options.get("pruner_startup_trials", 5)))
+    else:
+        raise ValueError("optuna.pruner must be one of: none, median")
+
+    storage = str(options.get("storage", "")).strip() or None
+    study_name_raw = str(options.get("study_name", "")).strip()
+    study_name = study_name_raw or None
+    load_if_exists = bool(options.get("load_if_exists", False))
+
+    def _collect_space_from_grid(grid: dict[str, list] | None) -> dict[str, Any]:
+        out: dict[str, Any] = {}
+        for key, values in (grid or {}).items():
+            vals = list(values) if isinstance(values, (list, tuple)) else []
+            if not vals:
+                continue
+            out[key] = vals
+        return out
+
+    raw_space = options.get("space", {})
+    if isinstance(raw_space, dict) and raw_space:
+        space: dict[str, Any] = dict(raw_space)
+        space_source = "optuna.space"
+    else:
+        space = _collect_space_from_grid(param_grid)
+        space_source = "grid"
+    if not space:
+        raise ValueError(
+            "Optuna search space is empty. Provide [optuna.space] in search_params.toml "
+            "(or keep non-empty [grid] as fallback)."
+        )
+
+    base_params = copy.deepcopy(default_values or {})
+    os.makedirs(runs_root, exist_ok=True)
+
+    with open(overrides_file, "a", encoding="utf-8") as f:
+        f.write("=== Optuna hyperparameter search (Multimodal) ===\n")
+        f.write(f"Selection: {selection_metric} [{selection_split}]\n")
+        f.write(f"Space source: {space_source}\n")
+        f.write(
+            "Optuna: "
+            f"n_trials={n_trials}, timeout_sec={timeout_sec}, n_jobs={n_jobs}, "
+            f"sampler={sampler_name}, pruner={pruner_name}, seed={seed}, "
+            f"save_checkpoints={optuna_save_checkpoints}\n"
+        )
+        f.write(
+            "Eval seeds: "
+            f"{optuna_eval_seeds if optuna_eval_seeds else '[single-seed from config/trial]'} | "
+            f"aggregate={seed_aggregate} | std_penalty={seed_std_penalty}\n"
+        )
+        f.write(f"Search params: {sorted(space.keys())}\n")
+        for line in _exporter_header_lines(base_config):
+            f.write(line + "\n")
+
+    best_tracker = {"score": float("-inf"), "params": copy.deepcopy(base_params)}
+
+    def _suggest_from_spec(trial, param_name: str, spec: Any) -> Any:
+        # Shorthand: list/tuple => categorical
+        if isinstance(spec, (list, tuple)):
+            values = list(spec)
+            if not values:
+                raise ValueError(f"Empty categorical choices for '{param_name}'")
+            return trial.suggest_categorical(param_name, values)
+
+        # Shorthand: scalar => fixed constant
+        if not isinstance(spec, dict):
+            return spec
+
+        kind = str(spec.get("type", "categorical")).strip().lower()
+        if kind in {"categorical", "choice", "choices"}:
+            values = spec.get("choices", spec.get("values", spec.get("options", [])))
+            if not isinstance(values, (list, tuple)) or len(values) == 0:
+                raise ValueError(
+                    f"optuna.space.{param_name}: categorical requires non-empty choices/values/options"
+                )
+            return trial.suggest_categorical(param_name, list(values))
+
+        if kind in {"float", "uniform", "loguniform"}:
+            if "low" not in spec or "high" not in spec:
+                raise ValueError(f"optuna.space.{param_name}: float requires low/high")
+            low = float(spec["low"])
+            high = float(spec["high"])
+            step_raw = spec.get("step", None)
+            step = None
+            if step_raw not in (None, "", 0, 0.0):
+                step = float(step_raw)
+            log = bool(spec.get("log", False))
+            return trial.suggest_float(param_name, low, high, step=step, log=log)
+
+        if kind in {"int", "integer"}:
+            if "low" not in spec or "high" not in spec:
+                raise ValueError(f"optuna.space.{param_name}: int requires low/high")
+            low = int(spec["low"])
+            high = int(spec["high"])
+            step = int(spec.get("step", 1))
+            log = bool(spec.get("log", False))
+            return trial.suggest_int(param_name, low, high, step=step, log=log)
+
+        if kind in {"bool", "boolean"}:
+            return trial.suggest_categorical(param_name, [False, True])
+
+        if kind in {"fixed", "const", "constant"}:
+            return spec.get("value")
+
+        raise ValueError(
+            f"Unsupported optuna.space.{param_name}.type='{kind}'. "
+            "Use: categorical|float|int|bool|fixed."
+        )
+
+    def _objective(trial) -> float:
+        sampled: dict[str, Any] = {}
+        if "scheduler_type" in space:
+            sampled["scheduler_type"] = _suggest_from_spec(trial, "scheduler_type", space["scheduler_type"])
+
+        for param_name, spec in space.items():
+            if param_name == "scheduler_type":
+                continue
+            if param_name == "warmup_ratio":
+                sched_name = str(
+                    sampled.get(
+                        "scheduler_type",
+                        base_params.get("scheduler_type", getattr(base_config, "fusion_scheduler_type", "")),
+                    )
+                ).lower()
+                if not sched_name.startswith("huggingface_"):
+                    continue
+            sampled[param_name] = _suggest_from_spec(trial, param_name, spec)
+
+        trial_params = copy.deepcopy(base_params)
+        trial_params.update(sampled)
+        if "save_checkpoints" not in sampled and "fusion_save_checkpoints" not in sampled:
+            trial_params["save_checkpoints"] = optuna_save_checkpoints
+        trial_seed_list = list(optuna_eval_seeds)
+        if not trial_seed_list:
+            if "random_seed" in trial_params:
+                trial_seed_list = [int(trial_params["random_seed"])]
+            elif "fusion_random_seed" in trial_params:
+                trial_seed_list = [int(trial_params["fusion_random_seed"])]
+            else:
+                trial_seed_list = [int(getattr(base_config, "fusion_random_seed", 42))]
+        run_dir = os.path.join(runs_root, f"trial_{trial.number + 1:04d}")
+        logging.info(
+            "[OPTUNA trial %d] params=%s | eval_seeds=%s",
+            trial.number + 1,
+            trial_params,
+            trial_seed_list,
+        )
+
+        try:
+            per_seed_scores: list[float] = []
+            per_seed_dev: list[dict[str, Any]] = []
+            per_seed_test: list[dict[str, Any]] = []
+            per_seed_avg: list[dict[str, Any]] = []
+
+            for eval_seed in trial_seed_list:
+                seed_params = copy.deepcopy(trial_params)
+                seed_params["random_seed"] = int(eval_seed)
+                seed_run_dir = os.path.join(run_dir, f"seed_{int(eval_seed)}")
+                _, dev_met, test_met, avg_met = _run_one(
+                    base_config=base_config,
+                    params=seed_params,
+                    train_loader=train_loader,
+                    dev_loader=dev_loader,
+                    test_loader=test_loader,
+                    train_fn=train_fn,
+                    run_dir=seed_run_dir,
+                )
+                eval_metrics = _choose_split_metrics(dev_met, test_met, avg_met, selection_split)
+                seed_score = _pick_score(eval_metrics, selection_metric)
+                if not isinstance(seed_score, (int, float)) or math.isnan(float(seed_score)):
+                    seed_score = fail_value
+                per_seed_scores.append(float(seed_score))
+                per_seed_dev.append(dev_met)
+                per_seed_test.append(test_met)
+                per_seed_avg.append(avg_met)
+
+            score_mean = float(statistics.fmean(per_seed_scores)) if per_seed_scores else fail_value
+            score_std = float(statistics.pstdev(per_seed_scores)) if len(per_seed_scores) > 1 else 0.0
+            if seed_aggregate == "mean_std_penalty":
+                score = score_mean - float(seed_std_penalty) * score_std
+            else:
+                score = score_mean
+
+            dev_met = _avg_numeric_metrics(per_seed_dev)
+            test_met = _avg_numeric_metrics(per_seed_test)
+            avg_met = _avg_numeric_metrics(per_seed_avg)
+            avg_met["SEED_SCORE_MEAN"] = score_mean
+            avg_met["SEED_SCORE_STD"] = score_std
+            avg_met["SEED_SCORE_AGG"] = float(score)
+            avg_met["SEED_COUNT"] = len(per_seed_scores)
+
+            is_best = float(score) > float(best_tracker["score"])
+            if is_best:
+                best_tracker["score"] = float(score)
+                best_tracker["params"] = copy.deepcopy(trial_params)
+
+            box = format_result_box_triple(
+                trial.number + 1,
+                "optuna_params",
+                sampled,
+                base_params,
+                dev_met,
+                test_met,
+                avg_met,
+                is_best=is_best,
+                selection_metric=selection_metric,
+                selection_split=selection_split,
+            )
+            with open(overrides_file, "a", encoding="utf-8") as f:
+                f.write("\n" + box + "\n")
+                f.write(f"  Per-seed scores ({selection_metric}[{selection_split}]): {per_seed_scores}\n")
+            _log_dataset_metrics(dev_met, overrides_file, "dev")
+            _log_dataset_metrics(test_met, overrides_file, "test")
+            _log_dataset_metrics(avg_met, overrides_file, "avg")
+
+            trial.set_user_attr("params_full", trial_params)
+            trial.set_user_attr("score", float(score))
+            trial.set_user_attr("eval_seeds", trial_seed_list)
+            trial.set_user_attr("per_seed_scores", per_seed_scores)
+            trial.set_user_attr("score_mean", score_mean)
+            trial.set_user_attr("score_std", score_std)
+            return float(score)
+        except Exception as exc:
+            msg = f"{type(exc).__name__}: {exc}"
+            logging.exception("[OPTUNA trial %d] failed: %s", trial.number + 1, msg)
+            with open(overrides_file, "a", encoding="utf-8") as f:
+                f.write(
+                    f"\n[OPTUNA trial {trial.number + 1}] FAILED\n"
+                    f"params={trial_params}\nerror={msg}\n"
+                )
+            trial.set_user_attr("error", msg)
+            trial.set_user_attr("params_full", trial_params)
+            return fail_value
+
+    study = optuna.create_study(
+        direction=direction,
+        sampler=sampler,
+        pruner=pruner,
+        study_name=study_name,
+        storage=storage,
+        load_if_exists=load_if_exists,
+    )
+    study.optimize(_objective, n_trials=n_trials, timeout=timeout_sec, n_jobs=n_jobs)
+
+    if len(study.trials) > 0:
+        best_trial = study.best_trial
+        best_score = float(study.best_value)
+        best_params = copy.deepcopy(base_params)
+        best_params.update(dict(best_trial.params))
+        if "save_checkpoints" not in best_params and "fusion_save_checkpoints" not in best_params:
+            best_params["save_checkpoints"] = optuna_save_checkpoints
+    else:
+        best_trial = None
+        best_score = float(best_tracker["score"])
+        best_params = copy.deepcopy(best_tracker["params"])
+
+    with open(overrides_file, "a", encoding="utf-8") as f:
+        f.write("\n=== Best combination (Optuna) ===\n")
+        f.write(f"best_score = {best_score:.4f}\n")
+        if best_trial is not None:
+            f.write(f"best_trial = {best_trial.number + 1}\n")
+        for k, v in best_params.items():
+            f.write(f"{k} = {v}\n")
+    logging.info("Optuna search finished. Best score=%.4f", best_score)
+    return {"best_score": best_score, "best_params": best_params}
+
+
 def _single_run_params_snapshot(cfg) -> dict[str, Any]:
     return {
         "input_type": getattr(cfg, "fusion_input_type", None),
@@ -531,6 +880,7 @@ def _single_run_params_snapshot(cfg) -> dict[str, Any]:
         "focal_gamma": getattr(cfg, "fusion_focal_gamma", None),
         "class_weighting": getattr(cfg, "fusion_class_weighting", None),
         "grad_clip": getattr(cfg, "fusion_grad_clip", None),
+        "save_checkpoints": getattr(cfg, "fusion_save_checkpoints", None),
         "lambda_proto": getattr(cfg, "fusion_lambda_proto", None),
         "lambda_proto_div": getattr(cfg, "fusion_lambda_proto_div", None),
     }

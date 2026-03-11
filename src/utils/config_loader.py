@@ -123,8 +123,8 @@ class ConfigLoader:
         self.search_selection_metric = str(search_cfg.get("selection_metric", "MF1"))
         self.search_early_stop_on = str(search_cfg.get("early_stop_on", "avg")).lower()
         self.search_params_path = str(search_cfg.get("params_path", "search_params.toml"))
-        if self.search_type not in {"none", "greedy", "exhaustive"}:
-            raise ValueError("search.type must be one of: none, greedy, exhaustive")
+        if self.search_type not in {"none", "greedy", "exhaustive", "optuna"}:
+            raise ValueError("search.type must be one of: none, greedy, exhaustive, optuna")
         if self.search_early_stop_on not in {"avg", "dev", "test"}:
             raise ValueError("search.early_stop_on must be one of: avg, dev, test")
 
@@ -164,6 +164,7 @@ class ConfigLoader:
         self.fusion_grad_clip = float(training_cfg.get("grad_clip", 1.0))
         self.fusion_lambda_proto = float(training_cfg.get("lambda_proto", 0.3))
         self.fusion_lambda_proto_div = float(training_cfg.get("lambda_proto_div", 0.02))
+        self.fusion_save_checkpoints = bool(training_cfg.get("save_checkpoints", True))
 
         self.face_export_splits = list(face_export_cfg.get("splits", self.export_splits))
         self.face_export_overwrite_cache = bool(face_export_cfg.get("overwrite_cache", False))
@@ -373,6 +374,7 @@ class ConfigLoader:
         logging.info("grad_clip=%s", self.fusion_grad_clip)
         logging.info("lambda_proto=%s", self.fusion_lambda_proto)
         logging.info("lambda_proto_div=%s", self.fusion_lambda_proto_div)
+        logging.info("save_checkpoints=%s", self.fusion_save_checkpoints)
 
         logging.info("--- Scene Export ---")
         logging.info("artifact_tag=%s", self.scene_artifact_tag)

@@ -339,9 +339,14 @@ def train(cfg, train_loader, dev_loader, test_loader, *, results_dir: str) -> Di
     grad_clip = float(getattr(cfg, "fusion_grad_clip", 1.0))
     lambda_proto = float(getattr(cfg, "fusion_lambda_proto", 0.3))
     lambda_proto_div = float(getattr(cfg, "fusion_lambda_proto_div", 0.02))
+    save_checkpoints = bool(getattr(cfg, "fusion_save_checkpoints", True))
 
-    ckpt_dir = Path(results_dir) / "checkpoints"
-    ckpt_dir.mkdir(parents=True, exist_ok=True)
+    ckpt_dir: Optional[Path] = None
+    if save_checkpoints:
+        ckpt_dir = Path(results_dir) / "checkpoints"
+        ckpt_dir.mkdir(parents=True, exist_ok=True)
+    else:
+        logging.info("Checkpoint saving disabled (training.save_checkpoints=false).")
     best_ckpt_path: Optional[Path] = None
     best_score = -1.0
     patience = 0
@@ -415,18 +420,19 @@ def train(cfg, train_loader, dev_loader, test_loader, *, results_dir: str) -> Di
         if not math.isnan(score) and score > best_score:
             best_score = score
             patience = 0
-            best_ckpt_path = ckpt_dir / f"fusion_best_ep{epoch:03d}_mf1avg_{best_score:.4f}.pt"
-            torch.save(
-                {
-                    "epoch": epoch,
-                    "score": best_score,
-                    "model_cfg": model_cfg,
-                    "model_state": model.state_dict(),
-                },
-                best_ckpt_path,
-            )
+            if save_checkpoints and ckpt_dir is not None:
+                best_ckpt_path = ckpt_dir / f"fusion_best_ep{epoch:03d}_mf1avg_{best_score:.4f}.pt"
+                torch.save(
+                    {
+                        "epoch": epoch,
+                        "score": best_score,
+                        "model_cfg": model_cfg,
+                        "model_state": model.state_dict(),
+                    },
+                    best_ckpt_path,
+                )
+                logging.info("Saved best fusion checkpoint: %s", best_ckpt_path)
             best_snapshot = {"epoch": epoch, "score": best_score, "train": tr, "dev": dv, "test": ts}
-            logging.info("Saved best fusion checkpoint: %s", best_ckpt_path)
         else:
             patience += 1
             if patience >= max_patience:
@@ -438,13 +444,16 @@ def train(cfg, train_loader, dev_loader, test_loader, *, results_dir: str) -> Di
         model.load_state_dict(state["model_state"], strict=True)
         final_dev = _eval_epoch(model=model, loader=dev_loader, criterion=criterion, device=device, num_classes=num_classes)
         final_test = _eval_epoch(model=model, loader=test_loader, criterion=criterion, device=device, num_classes=num_classes)
+    elif best_snapshot:
+        final_dev = dict(best_snapshot.get("dev", {}))
+        final_test = dict(best_snapshot.get("test", {}))
     else:
         final_dev = {}
         final_test = {}
 
     summary = {
         "best_score": best_score,
-        "best_checkpoint": str(best_ckpt_path) if best_ckpt_path is not None else "",
+        "best_checkpoint": str(best_ckpt_path) if (save_checkpoints and best_ckpt_path is not None) else "",
         "exporters": _exporters_snapshot(cfg),
         "best": best_snapshot,
         "final_dev": final_dev,

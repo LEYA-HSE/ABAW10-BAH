@@ -26,15 +26,22 @@ from src.utils.measures import mf1_ah, uar_ah
 
 CONFIG_PATH = "config.challenge.toml"
 SPLIT = "test"
-CHECKPOINT_PATH = "./results/best_fusion_82_66/checkpoints/fusion_best_ep026_mf1avg_0.8266.pt"
+CHECKPOINT_PATH = "./results/proto_single/checkpoints/fusion_best_ep040_mf1avg_0.8325.pt"
+CHECKPOINT_PATHS = [
+    "./results/proto_1/checkpoints/fusion_best_ep015_mf1avg_0.8135.pt",
+    "./results/proto_2/checkpoints/fusion_best_ep020_mf1avg_0.8148.pt",
+    "./results/proto_3/checkpoints/fusion_best_ep016_mf1avg_0.8084.pt",
+    "./results/proto_4/checkpoints/fusion_best_ep017_mf1avg_0.8224.pt",
+    "./results/proto_5/checkpoints/fusion_best_ep012_mf1avg_0.8175.pt",
+]
 OUTPUT_ROOT = "./results/challenge_submissions"
-RUN_TAG = "best_fusion_82_66"
+RUN_TAG = "best_run"
 RUN_MODE = "challenge_submit"  # challenge_submit | eval_metrics
 
 EVAL_CONFIG_PATH = "config.toml"
 EVAL_SPLITS = ["dev", "test"]
 EVAL_OUTPUT_ROOT = "./results/eval_inference"
-EVAL_TAG = "best_fusion_82_66"
+EVAL_TAG = "best_run"
 
 
 def _resolve_device(device_str: str) -> torch.device:
@@ -112,7 +119,44 @@ def _load_model_and_cfg(checkpoint_path: Path, emb_dims: Dict[str, int], device:
     return model, model_cfg
 
 
-def _predict(model: MultiModalModel, loader, device: torch.device) -> Tuple[Dict[str, Dict[str, float | int]], Dict[str, int]]:
+def _resolve_checkpoint_paths(
+    checkpoint_path: str | None = None,
+    checkpoint_paths: List[str] | None = None,
+) -> List[Path]:
+    raw = list(checkpoint_paths or [])
+    if not raw:
+        raw = list(CHECKPOINT_PATHS)
+    if not raw and checkpoint_path:
+        raw = [checkpoint_path]
+    out = [Path(str(p)) for p in raw]
+    if not out:
+        raise ValueError("No checkpoint paths provided")
+    for ckpt in out:
+        if not ckpt.exists():
+            raise FileNotFoundError(f"Fusion checkpoint not found: {ckpt}")
+    return out
+
+
+def _load_models_and_cfgs(
+    checkpoint_paths: List[Path],
+    emb_dims: Dict[str, int],
+    device: torch.device,
+) -> Tuple[List[MultiModalModel], Dict]:
+    models: List[MultiModalModel] = []
+    cfg_ref: Dict | None = None
+    for ckpt in checkpoint_paths:
+        model, model_cfg = _load_model_and_cfg(ckpt, emb_dims=emb_dims, device=device)
+        if cfg_ref is None:
+            cfg_ref = dict(model_cfg)
+        elif dict(model_cfg) != cfg_ref:
+            logging.warning("Model cfg differs for checkpoint: %s", ckpt)
+        models.append(model)
+    return models, (cfg_ref or {})
+
+
+def _predict(models: List[MultiModalModel], loader, device: torch.device) -> Tuple[Dict[str, Dict[str, float | int]], Dict[str, int]]:
+    if not models:
+        raise ValueError("No models loaded for prediction")
     pred_map: Dict[str, Dict[str, float | int]] = {}
     label_map: Dict[str, int] = {}
     with torch.no_grad():
@@ -120,8 +164,13 @@ def _predict(model: MultiModalModel, loader, device: torch.device) -> Tuple[Dict
             if batch is None:
                 continue
             b = _move_batch_to_device(batch, device)
-            logits = model(b)["logits"]
-            probs = torch.softmax(logits, dim=1)
+            probs_sum = None
+            for model in models:
+                logits = model(b)["logits"]
+                probs = torch.softmax(logits, dim=1)
+                probs_sum = probs if probs_sum is None else (probs_sum + probs)
+            assert probs_sum is not None
+            probs = probs_sum / float(len(models))
             preds = probs.argmax(dim=1)
 
             for sample_id, prob_vec, pred, label in zip(
@@ -217,22 +266,24 @@ def _write_submission_files(out_dir: Path, records: List[Tuple[str, float, float
 def run_challenge_inference(
     config_path: str = CONFIG_PATH,
     checkpoint_path: str = CHECKPOINT_PATH,
+    checkpoint_paths: List[str] | None = None,
     split: str = SPLIT,
 ) -> Dict[str, str]:
     setup_logger(logging.INFO)
     cfg = ConfigLoader(config_path)
     cfg.show_config()
 
-    ckpt = Path(checkpoint_path)
-    if not ckpt.exists():
-        raise FileNotFoundError(f"Fusion checkpoint not found: {ckpt}")
+    ckpts = _resolve_checkpoint_paths(checkpoint_path=checkpoint_path, checkpoint_paths=checkpoint_paths)
+    logging.info("Using %d checkpoint(s) for ensemble", len(ckpts))
+    for i, ckpt in enumerate(ckpts, start=1):
+        logging.info("  [%d] %s", i, ckpt)
 
     device = _resolve_device(str(getattr(cfg, "device", "cpu")))
     dataset, loader = make_multimodal_dataset_and_loader(cfg, split)
     emb_dims = {m: int(dataset.modality_dims["emb"].get(m, 0)) for m in cfg.multimodal_modalities}
 
-    model, model_cfg = _load_model_and_cfg(ckpt, emb_dims=emb_dims, device=device)
-    pred_map, _ = _predict(model, loader, device=device)
+    models, model_cfg = _load_models_and_cfgs(ckpts, emb_dims=emb_dims, device=device)
+    pred_map, _ = _predict(models, loader, device=device)
 
     video_order = _load_reference_video_order(cfg, split)
     records: List[Tuple[str, float, float, int]] = []
@@ -257,12 +308,17 @@ def run_challenge_inference(
     _validate_records(records)
 
     timestamp = datetime.now().strftime("%Y%m%d_%H%M%S")
-    out_dir = Path(OUTPUT_ROOT) / f"{RUN_TAG}_{ckpt.stem}_{timestamp}"
+    if len(ckpts) == 1:
+        suffix = ckpts[0].stem
+    else:
+        suffix = f"ensemble_{len(ckpts)}"
+    out_dir = Path(OUTPUT_ROOT) / f"{RUN_TAG}_{suffix}_{timestamp}"
     paths = _write_submission_files(out_dir, records)
 
     meta = {
         "config_path": str(config_path),
-        "checkpoint_path": str(ckpt),
+        "checkpoint_paths": [str(p) for p in ckpts],
+        "ensemble_size": len(ckpts),
         "split": split,
         "num_samples": len(records),
         "device": str(device),
@@ -299,9 +355,22 @@ def _compute_eval_metrics(y_true: List[int], y_pred: List[int]) -> Dict[str, flo
     return out
 
 
+def _average_metrics_across_splits(metrics_by_split: Dict[str, Dict[str, float]], splits: List[str]) -> Dict[str, float]:
+    selected = [metrics_by_split.get(s, {}) for s in splits if isinstance(metrics_by_split.get(s), dict)]
+    if not selected:
+        return {}
+    keys = sorted(set().union(*(m.keys() for m in selected)))
+    out: Dict[str, float] = {}
+    for key in keys:
+        vals = [m.get(key) for m in selected if isinstance(m.get(key), (int, float))]
+        if vals:
+            out[key] = float(sum(float(v) for v in vals) / len(vals))
+    return out
+
+
 def _run_eval_for_split(
     cfg: ConfigLoader,
-    model: MultiModalModel,
+    models: List[MultiModalModel],
     device: torch.device,
     split: str,
     out_dir: Path,
@@ -309,7 +378,7 @@ def _run_eval_for_split(
     import pandas as pd
 
     dataset, loader = make_multimodal_dataset_and_loader(cfg, split)
-    pred_map, label_map = _predict(model, loader, device=device)
+    pred_map, label_map = _predict(models, loader, device=device)
 
     csv_path = _resolve_split_csv_path(cfg, split)
     df = pd.read_csv(csv_path)
@@ -398,15 +467,17 @@ def _run_eval_for_split(
 def run_eval_metrics(
     config_path: str = EVAL_CONFIG_PATH,
     checkpoint_path: str = CHECKPOINT_PATH,
+    checkpoint_paths: List[str] | None = None,
     splits: List[str] | None = None,
 ) -> Dict[str, Dict[str, float]]:
     setup_logger(logging.INFO)
     cfg = ConfigLoader(config_path)
     cfg.show_config()
 
-    ckpt = Path(checkpoint_path)
-    if not ckpt.exists():
-        raise FileNotFoundError(f"Fusion checkpoint not found: {ckpt}")
+    ckpts = _resolve_checkpoint_paths(checkpoint_path=checkpoint_path, checkpoint_paths=checkpoint_paths)
+    logging.info("Using %d checkpoint(s) for ensemble", len(ckpts))
+    for i, ckpt in enumerate(ckpts, start=1):
+        logging.info("  [%d] %s", i, ckpt)
 
     use_splits = list(splits) if splits is not None else list(EVAL_SPLITS)
     if not use_splits:
@@ -416,23 +487,38 @@ def run_eval_metrics(
     # build emb dims from first split
     first_dataset, _ = make_multimodal_dataset_and_loader(cfg, use_splits[0])
     emb_dims = {m: int(first_dataset.modality_dims["emb"].get(m, 0)) for m in cfg.multimodal_modalities}
-    model, model_cfg = _load_model_and_cfg(ckpt, emb_dims=emb_dims, device=device)
+    models, model_cfg = _load_models_and_cfgs(ckpts, emb_dims=emb_dims, device=device)
 
     timestamp = datetime.now().strftime("%Y%m%d_%H%M%S")
-    out_dir = Path(EVAL_OUTPUT_ROOT) / f"{EVAL_TAG}_{ckpt.stem}_{timestamp}"
+    if len(ckpts) == 1:
+        suffix = ckpts[0].stem
+    else:
+        suffix = f"ensemble_{len(ckpts)}"
+    out_dir = Path(EVAL_OUTPUT_ROOT) / f"{EVAL_TAG}_{suffix}_{timestamp}"
     out_dir.mkdir(parents=True, exist_ok=True)
 
     per_split: Dict[str, Dict[str, float]] = {}
     for split in use_splits:
-        per_split[split] = _run_eval_for_split(cfg, model=model, device=device, split=split, out_dir=out_dir)
+        per_split[split] = _run_eval_for_split(cfg, models=models, device=device, split=split, out_dir=out_dir)
+    avg_metrics = _average_metrics_across_splits(per_split, use_splits)
+    if avg_metrics:
+        logging.info(
+            "[Eval AVG %s] ACC=%.4f MF1=%.4f UAR=%.4f",
+            "+".join(use_splits),
+            float(avg_metrics.get("ACC", float("nan"))),
+            float(avg_metrics.get("MF1", float("nan"))),
+            float(avg_metrics.get("UAR", float("nan"))),
+        )
 
     summary = {
         "config_path": str(config_path),
-        "checkpoint_path": str(ckpt),
+        "checkpoint_paths": [str(p) for p in ckpts],
+        "ensemble_size": len(ckpts),
         "splits": use_splits,
         "device": str(device),
         "model_cfg": model_cfg,
         "metrics": per_split,
+        "metrics_avg": avg_metrics,
     }
     summary_path = out_dir / "eval_metrics.json"
     with summary_path.open("w", encoding="utf-8") as handle:
