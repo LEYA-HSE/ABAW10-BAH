@@ -22,9 +22,6 @@ train_df.to_parquet("data/output/split_train.parquet")
 val_df.to_parquet("data/output/split_val.parquet")
 test_df.to_parquet("data/output/split_test.parquet")
 
-oot_df = read_split_dataset("data/test-set-30-participants-unlabeled/data/split/test.txt")
-imp = pd.read_csv("data/experiments/exp_1/13_imp.csv", index_col=0)
-
 # %%
 
 def word_stats(df, words_list):
@@ -46,8 +43,6 @@ def word_stats(df, words_list):
 
     return df, all_names
 
-# words_list = ['but', 'been', 'stop', 'usually', 'love',
-              # 'my', 'want', 'much', 'up', 'off']
 pd.options.display.max_rows = 1000
 
 num_top_words = 100
@@ -58,8 +53,7 @@ words_list = (
 )
 
 concat = []
-for name, dataset in [('train', train_df),
-                      ('oot', oot_df)]:
+for name, dataset in [('train', train_df)]:
    # print(name)
    dataset, all_names = word_stats(dataset, words_list)
    freq = dataset[all_names].describe().round(2)[words_list].loc['mean']
@@ -110,7 +104,7 @@ whole_df = pd.concat([train_df, val_df, test_df])
 train_new, val_new, test_new = get_vocab_dataset(train_dataset=whole_df,
                                                  transformed_dataset_list=[train_df, val_df, test_df],
                                                  ngram_range=(1, 1),
-                                                 max_features=1000,
+                                                 max_features=2000,
                                                  stop_words=None)
 
 print(train_new.shape, val_new.shape, test_new.shape)
@@ -118,3 +112,54 @@ train_new.to_parquet("data/output/split_train_1.parquet")
 val_new.to_parquet("data/output/split_val_1.parquet")
 test_new.to_parquet("data/output/split_test_1.parquet")
 
+# %%
+
+import nltk
+
+nltk.download('wordnet')
+nltk.download('averaged_perceptron_tagger_eng')
+
+# %%
+
+import nlpaug.augmenter.word as naw
+
+
+def get_augmented_df(df, aug):
+   new_df = df.copy(True)
+   new_texts = []
+   for text in new_df['text'].values:
+      augmented_text = aug.augment(text, n=1)
+      new_texts.append(augmented_text[0])
+   
+   new_df['text'] = new_texts
+   return new_df
+
+
+# Create a synonym replacement augmenter
+aug = naw.SynonymAug(aug_p=0.3)
+
+train_2_df = get_augmented_df(train_df, aug)
+train_2_df = pd.concat([train_df, train_2_df])
+train_2_df.to_parquet("data/output/split_train_2.parquet")
+
+# %%
+
+import nlpaug.augmenter.word as naw
+
+# text = "The quick brown fox jumps over the lazy dog."
+aug = naw.RandomWordAug(action="swap")
+
+train_3_df = get_augmented_df(train_df, aug)
+train_3_df = pd.concat([train_df, train_3_df])
+train_3_df.to_parquet("data/output/split_train_3.parquet")
+
+# %%
+
+aug = naw.SynonymAug(aug_p=0.3)
+df_1 = get_augmented_df(train_df, aug)
+
+aug = naw.RandomWordAug(action="swap")
+df_2 = get_augmented_df(train_df, aug)
+
+train_4_df = pd.concat([train_df, df_1, df_2, train_df])
+train_4_df.to_parquet("data/output/split_train_4.parquet")
