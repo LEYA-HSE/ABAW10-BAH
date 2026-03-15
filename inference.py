@@ -13,9 +13,9 @@ from transformers import Wav2Vec2Processor, Wav2Vec2Model
 
 
 # ===================== EDIT THESE =====================
-AUDIO_ROOT = Path("")          # папка с аудио
-OUT_PKL    = Path("")      # куда сохранить pickle
-CKPT_PATH  = Path("")            # pt файл
+AUDIO_ROOT = Path("")
+OUT_PKL    = Path("")
+CKPT_PATH  = Path("") # .pt
 W2V_MODEL  = "audeering/wav2vec2-large-robust-12-ft-emotion-msp-dim"
 DEVICE_STR = "cuda"  # "cuda" | "cpu"
 AUDIO_EXTS = {".wav"}
