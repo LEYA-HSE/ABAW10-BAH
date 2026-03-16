@@ -34,9 +34,17 @@ CHECKPOINT_PATHS = [
     "./results/proto_4/checkpoints/fusion_best_ep017_mf1avg_0.8224.pt",
     "./results/proto_5/checkpoints/fusion_best_ep012_mf1avg_0.8175.pt",
 ]
+
+# CHECKPOINT_PATHS = [
+#     "./results/model_1/checkpoints/fusion_best_ep010_mf1avg_0.8106.pt",
+#     "./results/model_2/checkpoints/fusion_best_ep009_mf1avg_0.8199.pt",
+#     "./results/model_3/checkpoints/fusion_best_ep014_mf1avg_0.8173.pt",
+#     "./results/model_4/checkpoints/fusion_best_ep012_mf1avg_0.8051.pt",
+#     "./results/model_5/checkpoints/fusion_best_ep011_mf1avg_0.8054.pt",
+# ]
 OUTPUT_ROOT = "./results/challenge_submissions"
 RUN_TAG = "best_run"
-RUN_MODE = "challenge_submit"  # challenge_submit | eval_metrics
+RUN_MODE = "eval_metrics"  # challenge_submit | eval_metrics
 
 EVAL_CONFIG_PATH = "config.toml"
 EVAL_SPLITS = ["dev", "test"]
