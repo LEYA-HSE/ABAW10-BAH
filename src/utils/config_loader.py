@@ -46,8 +46,8 @@ class ConfigLoader:
     - multimodal artifact validation/loading
     - modality artifact export (face/audio/text/scene)
 
-    It keeps a few legacy fallbacks so existing auxiliary files such as
-    `assets/configs/face_legacy_best.toml` can still be read by the face exporter.
+    A small set of legacy fallbacks is retained only where exporters still
+    rely on older auxiliary configs.
     """
 
     def __init__(self, config_path: str = "config.toml") -> None:
@@ -58,7 +58,6 @@ class ConfigLoader:
 
         general_cfg = _section(self.config, "general")
         dataloader_cfg = _section(self.config, "dataloader")
-        dataloader_mm_cfg = _section(self.config, "dataloader", "multimodal")
         runtime_cfg = _section(self.config, "runtime")
         search_cfg = _section(self.config, "search")
         multimodal_cfg = _section(self.config, "multimodal")
@@ -82,26 +81,6 @@ class ConfigLoader:
         self.datasets = _section(self.config, "datasets")
         self.multimodal_modalities = list(multimodal_cfg.get("modalities", []))
         self.multimodal_artifacts_dir = str(multimodal_cfg.get("artifacts_dir", "./features"))
-        self.multimodal_placeholder_modalities = list(_pick(
-            dataloader_mm_cfg.get("placeholder_modalities"),
-            multimodal_cfg.get("placeholder_modalities"),  # legacy fallback
-            default=[],
-        ))
-        self.multimodal_placeholder_prob_dim = int(_pick(
-            dataloader_mm_cfg.get("placeholder_prob_dim"),
-            multimodal_cfg.get("placeholder_prob_dim"),  # legacy fallback
-            default=0,
-        ))
-        self.multimodal_placeholder_logits_dim = int(_pick(
-            dataloader_mm_cfg.get("placeholder_logits_dim"),
-            multimodal_cfg.get("placeholder_logits_dim"),  # legacy fallback
-            default=0,
-        ))
-        self.multimodal_placeholder_emb_dim = int(_pick(
-            dataloader_mm_cfg.get("placeholder_emb_dim"),
-            multimodal_cfg.get("placeholder_emb_dim"),  # legacy fallback
-            default=0,
-        ))
         self.multimodal_sources = dict(multimodal_cfg.get("sources", {}))
         self.export_splits = list(exports_cfg.get("splits", ["train", "dev", "test"]))
 
@@ -314,7 +293,6 @@ class ConfigLoader:
         logging.info("Modalities: %s", self.multimodal_modalities)
         logging.info("Artifacts Dir: %s", self.multimodal_artifacts_dir)
         logging.info("Export Splits (default): %s", self.export_splits)
-        logging.info("Placeholder Modalities: %s", self.multimodal_placeholder_modalities)
 
         logging.info("--- Face Export ---")
         logging.info("artifact_tag=%s", self.face_artifact_tag)

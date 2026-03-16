@@ -128,8 +128,7 @@ def _splits_to_process(required_splits: list[str], resolve_path_fn, force_reexpo
 
 
 def _ensure_face_artifacts(base_config) -> None:
-    placeholder_modalities = set(getattr(base_config, "multimodal_placeholder_modalities", []))
-    if "face" not in getattr(base_config, "multimodal_modalities", []) or "face" in placeholder_modalities:
+    if "face" not in getattr(base_config, "multimodal_modalities", []):
         return
 
     required_splits = _required_pipeline_splits(base_config)
@@ -163,8 +162,7 @@ def _ensure_face_artifacts(base_config) -> None:
 
 
 def _ensure_audio_artifacts(base_config) -> None:
-    placeholder_modalities = set(getattr(base_config, "multimodal_placeholder_modalities", []))
-    if "audio" not in getattr(base_config, "multimodal_modalities", []) or "audio" in placeholder_modalities:
+    if "audio" not in getattr(base_config, "multimodal_modalities", []):
         return
 
     required_splits = _required_pipeline_splits(base_config)
@@ -214,8 +212,7 @@ def _ensure_audio_artifacts(base_config) -> None:
 
 
 def _ensure_scene_artifacts(base_config) -> None:
-    placeholder_modalities = set(getattr(base_config, "multimodal_placeholder_modalities", []))
-    if "scene" not in getattr(base_config, "multimodal_modalities", []) or "scene" in placeholder_modalities:
+    if "scene" not in getattr(base_config, "multimodal_modalities", []):
         return
 
     required_splits = _required_pipeline_splits(base_config)
@@ -249,8 +246,7 @@ def _ensure_scene_artifacts(base_config) -> None:
 
 
 def _ensure_text_artifacts(base_config) -> None:
-    placeholder_modalities = set(getattr(base_config, "multimodal_placeholder_modalities", []))
-    if "text" not in getattr(base_config, "multimodal_modalities", []) or "text" in placeholder_modalities:
+    if "text" not in getattr(base_config, "multimodal_modalities", []):
         return
 
     required_splits = _required_pipeline_splits(base_config)
@@ -308,7 +304,7 @@ def _run_multimodal_pipeline(base_config, results_dir: str, use_tg: bool) -> Non
     if base_config.prepare_only:
         logging.info("== prepare_only mode: multimodal artifacts validated, no training ==")
         notify_telegram(
-            f"? <b>multimodal_artifacts</b>: prepare_only completed\n?? {results_dir}",
+            f"<b>multimodal_artifacts</b>: prepare_only completed\nresults: {results_dir}",
             enabled=use_tg,
         )
         return
@@ -333,7 +329,7 @@ def _run_multimodal_pipeline(base_config, results_dir: str, use_tg: bool) -> Non
         best_ckpt = summary.get("best_checkpoint", "")
         logging.info("Fusion training finished: best_score=%.4f checkpoint=%s", float(best_score), best_ckpt)
         notify_telegram(
-            f"? <b>fusion_train</b>: done\nMF1_AVG={float(best_score):.4f}\n?? {best_ckpt}",
+            f"<b>fusion_train</b>: done\nMF1_AVG={float(best_score):.4f}\ncheckpoint: {best_ckpt}",
             enabled=use_tg,
         )
         return
@@ -402,13 +398,12 @@ def _run_multimodal_pipeline(base_config, results_dir: str, use_tg: bool) -> Non
     best_params = search_result.get("best_params", {})
     logging.info("Search finished: best_score=%.4f best_params=%s", best_score, best_params)
     notify_telegram(
-        f"? <b>{search_type}_search</b>: done\nbest_score={best_score:.4f}\n?? {results_dir}",
+        f"<b>{search_type}_search</b>: done\nbest_score={best_score:.4f}\nresults: {results_dir}",
         enabled=use_tg,
     )
 
 
 def main():
-    # ???????????????????? 1. Config and directories ????????????????????
     base_config = ConfigLoader("config.toml")
 
     run_name = "multimodal_pipeline"
@@ -416,7 +411,6 @@ def main():
     results_dir = f"results/results_{run_name}_{timestamp}"
     os.makedirs(results_dir, exist_ok=True)
 
-    # ???????????????????? 2. Logging ?????????????????????????????????
     log_file = os.path.join(results_dir, "session_log.txt")
     setup_logger(logging.INFO, log_file=log_file)
     base_config.show_config()
@@ -426,8 +420,7 @@ def main():
         f"use_telegram = {use_tg}  (env token={bool(os.getenv('TELEGRAM_BOT_TOKEN'))}, chat={bool(os.getenv('TELEGRAM_CHAT_ID'))})"
     )
 
-    # startup ping
-    notify_telegram(f"?? Start: <b>{run_name}</b>\n?? {results_dir}", enabled=use_tg)
+    notify_telegram(f"Start: <b>{run_name}</b>\nresults: {results_dir}", enabled=use_tg)
 
     # Save config copy
     shutil.copy("config.toml", os.path.join(results_dir, "config_copy.toml"))
@@ -440,7 +433,7 @@ if __name__ == "__main__":
         main()
     except Exception as e:
         notify_telegram(
-            f"? Crash: <code>{type(e).__name__}</code>\n{e}",
+            f"Crash: <code>{type(e).__name__}</code>\n{e}",
             enabled=True
         )
         raise

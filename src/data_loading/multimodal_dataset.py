@@ -100,32 +100,6 @@ def _source_kind(source_cfg: Any) -> str:
     return "artifact"
 
 
-def _placeholder_dim(source_cfg: Any, field: str) -> int:
-    if not isinstance(source_cfg, dict):
-        return 0
-    return int(source_cfg.get(f"{field}_dim", 0))
-
-
-def _is_placeholder_modality(config, modality: str, source_cfg: Any) -> bool:
-    if modality in set(getattr(config, "multimodal_placeholder_modalities", [])):
-        return True
-    return _source_kind(source_cfg) == "placeholder"
-
-
-def _placeholder_dim_for_modality(config, modality: str, source_cfg: Any, field: str) -> int:
-    if isinstance(source_cfg, dict):
-        key = f"{field}_dim"
-        if key in source_cfg:
-            return int(source_cfg[key])
-    if field == "prob":
-        return int(getattr(config, "multimodal_placeholder_prob_dim", 0))
-    if field == "logits":
-        return int(getattr(config, "multimodal_placeholder_logits_dim", 0))
-    if field == "emb":
-        return int(getattr(config, "multimodal_placeholder_emb_dim", 0))
-    return 0
-
-
 def _pick_video_column(df: pd.DataFrame) -> str | None:
     for column in ("video_path", "video_name"):
         if column in df.columns:
@@ -217,24 +191,11 @@ class MultimodalArtifactsDataset(Dataset):
 
         for modality in self.modalities:
             source_cfg = self.sources.get(modality, {})
-
-            if _is_placeholder_modality(self.config, modality, source_cfg):
-                self.entries_by_modality[modality] = {}
-                self.modality_dims["prob"][modality] = _placeholder_dim_for_modality(
-                    self.config, modality, source_cfg, "prob"
-                )
-                self.modality_dims["logits"][modality] = _placeholder_dim_for_modality(
-                    self.config, modality, source_cfg, "logits"
-                )
-                self.modality_dims["emb"][modality] = _placeholder_dim_for_modality(
-                    self.config, modality, source_cfg, "emb"
-                )
-                continue
             source_kind = _source_kind(source_cfg)
             if source_kind not in ("artifact", ""):
                 raise ValueError(
                     f"Unsupported source kind '{source_kind}' for modality '{modality}'. "
-                    "Use 'artifact' or 'placeholder'."
+                    "Use 'artifact'."
                 )
 
             artifact_path = (
