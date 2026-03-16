@@ -188,3 +188,4 @@ data/
 .direnv/
 .envrc
 catboost_info/
+output/

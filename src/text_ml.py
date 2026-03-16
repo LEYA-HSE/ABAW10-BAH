@@ -481,5 +481,5 @@ results, results_mean = calc_scores(root_folder="data/experiments/exp_1/",
                                     plot_names=['13', '7'])
 
 top_names = results_mean.head(5).index.tolist()
-print(results_mean.to_markdown(tablefmt="mixed_outline"))
-print(results[results['name'].isin(top_names)].to_markdown(tablefmt="mixed_outline"))
+print(results_mean.to_markdown(tablefmt="github"))
+print(results[results['name'].isin(top_names)].to_markdown(tablefmt="github"))
