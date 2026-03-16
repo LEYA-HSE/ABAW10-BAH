@@ -1,0 +1,52 @@
+--extra-index-url https://download.pytorch.org/whl/cu124
+
+# === Core PyTorch stack ===
+torch==2.6.0+cu124
+torchvision==0.21.0+cu124
+
+# === HuggingFace ecosystem ===
+transformers==4.52.4
+huggingface-hub==0.34.4
+tokenizers==0.21.2
+safetensors==0.6.2
+sentencepiece==0.2.0
+
+# === Math / ML utils ===
+numpy==1.26.4
+scipy==1.16.1
+scikit-learn==1.6.1
+pandas==2.3.0
+einops==0.8.1
+
+# === Video / Vision ===
+opencv-python==4.11.0.86
+opencv-contrib-python==4.11.0.86
+
+# === Logging / Monitoring ===
+tqdm==4.67.1
+colorlog==6.9.0
+python-json-logger==3.3.0
+
+# === HTTP ===
+requests==2.32.3
+
+# === Configs ===
+PyYAML==6.0.2
+toml==0.10.2
+python-dotenv==1.0.1
+
+# === Optional (YOLO etc.) ===
+ultralytics==8.3.177
+ultralytics-thop==2.0.15
+
+# === Search / HPO ===
+optuna==4.7.0
+
+# === Audio ===
+librosa==0.10.2.post1
+
+# === Scene exporter ===
+decord==0.6.0
+
+# === Text exporter (impl=3) ===
+catboost==1.2.8

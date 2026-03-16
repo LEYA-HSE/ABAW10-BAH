@@ -1,0 +1,129 @@
+[grid]
+# Train-only optimization around best_fusion_82_66.
+# Model architecture is kept from config.toml.
+optimizer = ["rmsprop", "adamw"]
+lr = [0.00012, 0.00016, 0.00020, 0.00025, 0.00032]
+weight_decay = [0.0002, 0.0005, 0.0010]
+scheduler_type = ["plateau", "cosine"]
+label_smoothing = [0.02, 0.05, 0.08]
+grad_clip = [0.7, 1.0, 1.5]
+
+[optuna]
+# Used only when search.type = "optuna".
+n_trials = 1000
+timeout_sec = 0
+n_jobs = 1
+sampler = "tpe" # tpe | random
+n_startup_trials = 20
+multivariate = true
+constant_liar = false
+pruner = "none" # none | median
+pruner_startup_trials = 10
+seed = 42
+direction = "maximize"
+study_name = "fusion_optuna_search_prototypes_v2"
+storage = "sqlite:///results/optuna_study_prototypes_v2.db"
+load_if_exists = true
+fail_value = -1.0
+save_checkpoints = false
+# eval_seeds = [42, 2025, 7777, 12345, 31415]
+seed_aggregate = "mean" # mean | mean_std_penalty
+seed_std_penalty = 0.10 # used only for mean_std_penalty
+
+[optuna.space.optimizer]
+type = "categorical"
+choices = ["rmsprop", "adamw"]
+
+[optuna.space.fusion_type]
+type = "fixed"
+value = "exchange_transformer"
+
+[optuna.space.input_type]
+type = "fixed"
+value = "emb"
+
+[optuna.space.x_layer_impl]
+type = "fixed"
+value = "torch"
+
+[optuna.space.use_prototypes]
+type = "fixed"
+value = true
+
+[optuna.space.d_model]
+type = "categorical"
+choices = [128, 256, 384,512]
+
+[optuna.space.drop]
+type = "float"
+low = 0.2
+high = 0.65
+step = 0.05
+
+[optuna.space.x_layers]
+type = "int"
+low = 1
+high = 6
+step = 1
+
+[optuna.space.x_heads]
+type = "categorical"
+choices = [2, 4, 8,16]
+
+[optuna.space.x_ff_mult]
+type = "categorical"
+choices = [2, 4, 6,8]
+
+[optuna.space.x_use_cls]
+type = "categorical"
+choices = [true, false]
+
+[optuna.space.lr]
+type = "float"
+low = 0.00008
+high = 0.00050
+log = true
+
+[optuna.space.weight_decay]
+type = "float"
+low = 0.00010
+high = 0.00200
+log = true
+
+[optuna.space.scheduler_type]
+type = "categorical"
+choices = ["plateau", "cosine"]
+
+[optuna.space.label_smoothing]
+type = "float"
+low = 0.00
+high = 0.06
+step = 0.01
+
+[optuna.space.grad_clip]
+type = "float"
+low = 0.5
+high = 2.0
+step = 0.1
+
+[optuna.space.num_prototypes]
+type = "categorical"
+choices = [4, 6, 8, 10, 12, 14, 16]
+
+[optuna.space.proto_tau]
+type = "float"
+low = 0.05
+high = 0.40
+step = 0.05
+
+[optuna.space.lambda_proto]
+type = "float"
+low = 0.05
+high = 0.80
+step = 0.05
+
+[optuna.space.lambda_proto_div]
+type = "float"
+low = 0.00
+high = 0.15
+step = 0.01

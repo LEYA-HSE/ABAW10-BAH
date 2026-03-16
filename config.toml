@@ -1,0 +1,110 @@
+[general]
+use_telegram = true
+
+[datasets.bah_ambivalence]
+base_dir = "E:/BAH/videos_normal"
+video_dir = "{base_dir}/video/{split}"
+audio_dir = "{base_dir}/audio/{split}"
+csv_path = "{base_dir}/BAH_{split}_2fps_Qwen3-VL-4B-Instruct.csv"
+
+[dataloader]
+batch_size = 32
+num_workers = 0
+shuffle = true
+prepare_only = false
+
+[runtime]
+device = "cuda"
+
+[search]
+type = "optuna" # none | greedy | exhaustive | optuna
+selection_metric = "MF1" # metric key taken from selected split block
+early_stop_on = "avg" # avg | dev | test
+params_path = "search_params.toml"
+
+[exports]
+splits = ["train", "dev", "test"]
+
+[model]
+input_type = "emb" # logits | prob | emb | emb+prob
+type = "exchange_transformer" # class_weighted | attn | concat_mlp | exchange_transformer | videoformer
+d_model = 384    # 256
+drop = 0.4      # 0.25
+use_prototypes = true
+num_prototypes = 8
+proto_tau = 0.2
+x_layers = 1   # 2
+x_heads = 4    # 4
+x_ff_mult = 2
+x_use_cls = true
+x_layer_impl = "torch" # torch | custom (layer from help_layers)
+x_positional_encoding = false
+videoformer_positional_encoding = false
+videoformer_gate_mode = "none" # none | t | d | bt | bd
+
+[training]
+random_seed = 42
+num_epochs = 100
+max_patience = 10
+optimizer = "rmsprop" # adam | adamw | sgd | rmsprop
+lr = 0.00015614419290436917
+weight_decay = 0.0002066938560458836
+momentum = 0.9
+scheduler_type = "plateau" # none | plateau | cosine | onecycle
+warmup_ratio = 0.1 # used by huggingface_* schedulers
+loss_name = "cross_entropy" # cross_entropy | focal
+label_smoothing = 0.05
+focal_gamma = 2.0
+class_weighting = "balanced" # none | balanced | manual
+class_weights = [1.0, 1.0]
+grad_clip = 1.7
+save_checkpoints = true
+lambda_proto = 0.65
+lambda_proto_div = 0.13
+
+[multimodal]
+modalities = ["face", "audio", "text", "scene"]
+artifacts_dir = "./features"
+
+[face_export]
+overwrite_cache = false
+classifier_weights = "./assets/checkpoints/face/best_model_weights.pt"
+average_features = "mean_std"
+video_extractor = "affectnet_efficientnet_b0"
+yolo_weights = "./src/data_loading/yolov8n-face.pt"
+video_mode = "stable"
+segment_length = 30
+affectnet_ckpt_path = "./assets/checkpoints/face/checkpoint_20260215_141507_epoch_011_mf10.7176_va0.5572.pt"
+affectnet_backbone = "efficientnet_b0"
+affectnet_image_size = 224
+affectnet_proj_dim = 0
+
+[audio_export]
+overwrite_cache = false
+# Single selector for audio model/features variant:
+# "best_1" | "best_3" or aliases ("1"/"3", "best_1.pt"/"best_3.pt", "best_1_pkl"/"best_3_pkl")
+impl = "best_1"
+# precomputed: read ./features/audio/<impl>_pkl/{split}.pkl
+# export: run exporter and write tagged artifacts folder
+source = "precomputed"
+wav2vec_model = "audeering/wav2vec2-large-robust-12-ft-emotion-msp-dim"
+sample_rate = 16000
+hidden_state_index = 10
+audio_exts = [".wav"]
+
+[text_export]
+overwrite_cache = false
+# Single selector:
+# ID: "2" | "3" | "6" | "7"
+# or checkpoint alias: "2__exp_1_model_13" | "3__exp_1_model_1" | "6__exp_5_model_3" | "7__exp_5_model_4"
+impl = "7__exp_5_model_4"
+text_column = "transcript"
+max_length = 256
+batch_size = 1
+
+[scene_export]
+overwrite_cache = false
+checkpoint_path = "./assets/checkpoints/scene/best_model.pth"
+preprocessor_dir = "./assets/checkpoints/scene"
+model_name = "MCG-NJU/videomae-base-finetuned-kinetics"
+num_frames = 16
