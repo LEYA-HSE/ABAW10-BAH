@@ -91,7 +91,6 @@ def get_vocab_dataset(train_dataset, transformed_dataset_list,
 
    new_list = []
    for dataset in transformed_dataset_list:
-   # use_vocab_only("hello run it he music")
       new_dataset = dataset.copy(True)
       new_dataset['text'] = new_dataset['text'].map(lambda x: use_vocab_only(x))
       new_list.append(new_dataset)

@@ -25,22 +25,6 @@ def read_frames(filepath):
     return df
 
 
-# raw_df = read_frames("data/input/split-frames/train.txt")
-#
-# df_uq = (
-#     raw_df.groupby(['user', 'question'])['label'].agg(['mean', 'count'])
-#     .reset_index()
-# )
-# df_uq.to_csv("data/experiments/exp_2/user_question_stats.csv")
-#
-# df_u = (
-#     raw_df.groupby(['user']).agg({'label': ['mean', 'count'], 'question': 'nunique'})
-#     .reset_index()
-# )
-# df_u.columns = [f"{x}_{y}" for x, y in df_u.columns.ravel()]
-# df_u.to_csv("data/experiments/exp_2/user_stats.csv")
-
-
 def read_yaml_transcription(directory):
     def construct_python_tuple(loader, node):
         return tuple(loader.construct_sequence(node))

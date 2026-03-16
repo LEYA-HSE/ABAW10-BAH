@@ -3,14 +3,8 @@ import pandas as pd
 from catboost import CatBoostClassifier
 from sklearn.feature_extraction.text import TfidfVectorizer, CountVectorizer
 from sklearn.pipeline import Pipeline
-from sklearn.preprocessing import FunctionTransformer
-from sklearn.metrics import average_precision_score, roc_auc_score, f1_score, PrecisionRecallDisplay
-from sklearn.discriminant_analysis import LinearDiscriminantAnalysis
-from sklearn.decomposition import TruncatedSVD
 from sklearn.linear_model import LogisticRegression
 from pulearn.bagging import BaggingPuClassifier
-from pulearn.elkanoto import ElkanotoPuClassifier, WeightedElkanotoPuClassifier
-from sklearn.svm import SVC
 
 from src.text_core import save_experiment_predictions, calc_scores
 

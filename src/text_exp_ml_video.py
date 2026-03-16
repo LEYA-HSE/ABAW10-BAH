@@ -3,16 +3,11 @@ import pandas as pd
 from catboost import CatBoostClassifier
 from sklearn.feature_extraction.text import TfidfVectorizer, CountVectorizer
 from sklearn.pipeline import Pipeline
-from sklearn.preprocessing import FunctionTransformer
-from sklearn.discriminant_analysis import LinearDiscriminantAnalysis
 from sklearn.decomposition import TruncatedSVD
 from sklearn.linear_model import LogisticRegression
 
 from src.text_core import save_experiment_predictions, calc_scores
 
-# train_df = pd.read_csv("data/input/video-text/BAH_train_4fps_Qwen3-VL-4B-Instruct.csv")
-# val_df = pd.read_csv("data/input/video-text/BAH_val_4fps_Qwen3-VL-4B-Instruct.csv")
-# test_df = pd.read_csv("data/input/video-text/BAH_test_4fps_Qwen3-VL-4B-Instruct.csv")
 train_df = pd.read_csv("data/input/video-text/BAH_train_Qwen3-VL-4B-Instruct.csv")
 val_df = pd.read_csv("data/input/video-text/BAH_val_Qwen3-VL-4B-Instruct.csv")
 test_df = pd.read_csv("data/input/video-text/BAH_test_Qwen3-VL-4B-Instruct.csv")

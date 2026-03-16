@@ -27,14 +27,13 @@ class TextDataset(torch.utils.data.Dataset):
 
 
 def predict_proba(model, data_loader, device):
-    model.eval()  # Перевод в режим оценки (выключает Dropout)
+    model.eval()
     all_preds = []
     all_labels = []
     
     sigmoid = torch.nn.Sigmoid()
     with torch.no_grad():
         for batch in data_loader:
-            # Перенос данных на устройство
             input_ids = batch['input_ids'].to(device)
             attention_mask = batch['attention_mask'].to(device)
             labels = batch['labels'].to(device)
@@ -70,23 +69,9 @@ def save_nn_experiment_predictions(root_folder, name, model, datasets, device):
         except (TypeError, OverflowError):
             return False
 
-    # Проверка словаря
-    # params = {}
-    # for key, value in pipe.get_params().items():
-    #     if is_serializable(value):
-    #         params[key] = value
-
-    # filepath = os.path.join(root_folder, f"{name}__params.json")
-    # print(f"file {filepath} was saved")
-    # with open(filepath, 'w') as f:
-        # json.dump(params, f, indent=4)
-
     for dtype, data_loader, y_true in datasets:
-        # X = df.drop('label', axis=1) if column is None else df[column] 
         pred, y_tmp = predict_proba(model, data_loader, device)
-        # print(pred, y_tmp, y_true.astype(int).values)
         data = np.column_stack([pred[:, 1], y_true.astype(int).values])
-        # data = np.concatenate([pred[:, 1], df['label'].values], )
         filepath = os.path.join(root_folder, f"{name}__{dtype}.npy")
         print(f"file {filepath} was saved")
         np.save(filepath, data)
@@ -103,7 +88,6 @@ def train(model, data_train_loader, data_valid_loader,
         for batch in data_train_loader:
             optimizer.zero_grad()
             
-            # Перенос батча на GPU
             input_ids = batch['input_ids'].to(device)
             attention_mask = batch['attention_mask'].to(device)
             labels = batch['labels'].to(device)

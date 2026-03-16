@@ -19,7 +19,6 @@ def save_experiment_predictions(root_folder, name, pipe, datasets, column='text'
         except (TypeError, OverflowError):
             return False
 
-    # Проверка словаря
     params = {}
     for key, value in pipe.get_params().items():
         if is_serializable(value):
