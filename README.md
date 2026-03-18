@@ -1,4 +1,4 @@
-Ответ Gemini
+
 VideoMAE for Behavioral Uncertainty Detection
 This repository contains the implementation of a video classification pipeline designed to detect behavioral uncertainty using the VideoMAE architecture. The model is built on the Vision Transformer (ViT) framework and optimized for spatio-temporal feature extraction.
 
