@@ -50,7 +50,6 @@ The model was trained and evaluated under the following technical conditions:
 * Scheduler: Cosine annealing learning rate scheduler.
 * Training: 15 epochs with a batch size of 4.
 * Regularization: Label smoothing with a factor of 0.1.
-* Hardware: Executed on an NVIDIA Tesla T4 GPU.
 * Data Split: Training, validation, and testing sets partitioned in a 70:15:15 ratio.
 
 ---
